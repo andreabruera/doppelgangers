@@ -18,10 +18,8 @@ import tqdm
 
 from tqdm import tqdm
 
-
 #import nonce2vec.utils.config as cutils
 #import nonce2vec.utils.files as futils
-#from nonce2vec.models.BERT_for_novels import BERT_test
 #from nonce2vec.utils.files import Samples
 #from nonce2vec.utils.novels_utilities import *
 #from nonce2vec.utils.count_based_models_utils import *
@@ -31,8 +29,8 @@ from collections import defaultdict
 from torch import Tensor
 from scipy.sparse import csr_matrix
 
-from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
-from torch.nn import CosineSimilarity, PairwiseDistance
+#from transformers import BertTokenizer, BertModel, BertForMaskedLM
+#from torch.nn import CosineSimilarity, PairwiseDistance
 
 ### Parser for the parameters to be passed.
 
@@ -98,7 +96,7 @@ parser.add_argument('--vocabulary', type=str, required=False)
 parser.add_argument('--window_size', type=int, required=False, default=15)
 parser.add_argument('--top_contexts', type=int, required=False)
 parser.add_argument('--weight', type=int, required=False)
-parser.add_argument('--write_to_file', action ='store_true', required=False)
+parser.add_argument('--write_to_file', action ='store_true', required=False, default = True)
 parser.add_argument('--matched', action ='store_true', required=False)
 
 args = parser.parse_args()
@@ -181,54 +179,31 @@ def ppmi(csr_matrix):
     csr_matrix.eliminate_zeros()
     return csr_matrix
 
-class BERT_test:
-        
-    def train(args, sentence, character, model, tokenizer):
-        layers = args.bert_layers
-        sentence.insert(0, '[CLS]')
-        temporary_masked_index = [i for i, v in enumerate(sentence) if v == '[MASK]'][0]
-        for word_index, word in enumerate(sentence): 
-            if word == '[MASK]' and word_index != temporary_masked_index:
-                del sentence[word_index]
-        
-        sentence = ' '.join(sentence)  
-        tokenized_text = tokenizer.tokenize(sentence)
-        masked_index = [i for i, v in enumerate(tokenized_text) if v == '[MASK]'][0]
-        assert tokenized_text[masked_index] == '[MASK]' 
-        other_indexes={token : index for index, token in enumerate(tokenized_text) if index>0}
+def BERT_test(args, model, tokenizer, tokenized_text):
 
-        indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_text)
-        tokens_tensor = torch.tensor([indexed_tokens])
-        model.eval()
-        with torch.no_grad():
-            encoded_layers, _ = model(tokens_tensor)
-  
+    masked_index = [i for i, v in enumerate(tokenized_text) if v == '[MASK]'][0]
+    assert tokenized_text[masked_index] == '[MASK]' 
+    other_indexes={token : index for index, token in enumerate(tokenized_text) if token != '[CLS]' and token != '[SEP]' and token != '[MASK]' and '#' not in token}
 
-        if args.sum_CLS:
-            layered_tensor = [word_tensor[0][0] for word_tensor in encoded_layers] 
+    indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_text)
+    tokens_tensor = torch.tensor([indexed_tokens])
 
-        elif args.sum_only:
-            summed_layer = defaultdict(torch.Tensor)
-            layered_tensor = []
-            full_tensor = [word_tensor[0] for word_tensor in encoded_layers]
-            for layer in full_tensor:
-                for word_index, word_vector in enumerate(layer):
-                    if word_index != 0 and word_index != masked_index:
-                        if len(summed_layer) == 0:
-                            summed_layer = word_vector
-                        elif word_index != masked_index:
-                            summed_layer += word_vector
-                layered_tensor.append(summed_layer)
-            
-        else:
-            layered_tensor = [word_tensor[0][masked_index] for word_tensor in encoded_layers] 
-        
-        other_words_vectors = {other_word: encoded_layers[11][0][other_word_index] for other_word, other_word_index in other_indexes.items()}
+    with torch.no_grad():
+        encoded_layers, _ = model(tokens_tensor)
 
-        assert len(layered_tensor) == 12
-        layered_tensor = torch.stack(layered_tensor)
+    layers = [layer[0] for layer in encoded_layers]
 
-        return layered_tensor, other_words_vectors
+    layered_tensor = layers[11][masked_index]
+    
+    other_words_vectors = {other_word: layers[0][other_word_index] for other_word, other_word_index in other_indexes.items()}
+
+    ''' Section for having a layered tensor for the newly-learnt name
+    #layered_tensor = [layer[masked_index] for layer in layers] 
+    #assert len(layered_tensor) == 12
+    #layered_tensor = torch.stack(layered_tensor)
+    '''
+
+    return layered_tensor, other_words_vectors
 
 def test_on_novel(args):
 
@@ -245,9 +220,12 @@ def test_on_novel(args):
         elmo = ElmoEmbedder()
 
     elif algorithm == 'bert':
-        from transformers import BertModel, BertTokenizer 
-        model = BertModel.from_pretrained('bert-base-uncased', output_hidden_states = True, output_attentions = True)
-        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', never_split=['[MASK]'])
+        import pytorch_pretrained_bert
+        from pytorch_pretrained_bert import BertTokenizer, BertForMaskedLM, BertModel
+        model = BertModel.from_pretrained('bert-base-uncased')
+        model.eval()
+        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        #tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', never_split=['[MASK]'])
 
     elif algorithm == 'w2v':
         import gensim
@@ -457,7 +435,7 @@ def test_on_novel(args):
 
                             for index in indexes:
 
-                                sentence = re.sub('CHAR', '[MASK]', sent_list[index])
+                                sentence = '[CLS] {} [SEP]'.format(re.sub('CHAR', '[MASK]', sent_list[index]))
 
                                 tokenized_text = tokenizer.tokenize(sentence)
 
@@ -468,24 +446,20 @@ def test_on_novel(args):
                                         background_space = defaultdict(numpy.ndarray)
 
                                     sentence_count+=1
-                                    print(tokenized_text)
 
                                 ### NOVELS_EDIT: added the <50 condition in order to reduce training time and to give more balanced training to every character.
                                     ### NOVELS NOTE: this is the part where the training happens
-                                    layered_tensor, other_words_vectors = BERT_test.train(args, tokenized_text, model, tokenizer)    
+                                    layered_tensor, other_words_vectors = BERT_test(args, model, tokenizer, tokenized_text)    
                                     if sentence_count == 1:
-                                        entity_dict[entity_name_and_part] = layered_tensor[11].detach().numpy()  
+                                        entity_dict[entity_name_and_part] = layered_tensor.detach().numpy()  
                                     elif sentence_count > 1:
                                         #for layer_index, layer in enumerate(char_dict[character_name_and_part]):
-                                        entity_dict[entity_name_and_part] = numpy.add(entity_dict[entity_name_and_part], layered_tensor[11].detach().numpy())
-                                    variance_collector.append(layered_tensor[11].detach().numpy())
+                                        entity_dict[entity_name_and_part] = numpy.add(entity_dict[entity_name_and_part], layered_tensor.detach().numpy())
+                                    variance_collector.append(layered_tensor.detach().numpy())
                                     
                                     for other_word, other_word_vector in other_words_vectors.items():
-                                        if other_word != '[MASK]':
-                                            if other_word in background_space.keys():
-                                                background_space[other_word] = numpy.add(other_word_vector, background_space[other_word])
-                                            else:
-                                                background_space[other_word] = other_word_vector
+                                        if other_word not in background_space.keys():
+                                            background_space[other_word] = other_word_vector
     ####### END OF BERT
 
 #### BEGINNING OF W2V
@@ -630,16 +604,14 @@ def test_on_novel(args):
                                 overall_training_counter += 1
                                 #print('Entity number {}'.format(overall_training_counter))
                                 current_background_space = {other_word : cosine_similarity(other_vector, entity_dict[entity_name_and_part]) for other_word, other_vector in background_space.items() if '#' not in other_word}
-                                top_similarities = sorted(current_background_space, key = current_background_space.get, reverse = True)[:99]
-                                top_info = [(word, current_background_space[word]) for word in top_similarities]
+                                top_similarities = { k : current_background_space[k] for k in sorted(current_background_space, key = current_background_space.get, reverse = True)[:99]}
                                 #print('Most similar words in this space for {}: {}'.format(entity_name_and_part, top_info))
                                 if args.write_to_file:
                                     with open('{}/details/{}.similarities'.format(current_folder, entity_name_and_part), 'w') as similarities:
-                                        similarities.write('Top similarities for {}:\n\n{}'.format(entity_name_and_part, top_info))
+                                        similarities.write('Top similarities for {}:\n\n{}'.format(entity_name_and_part, top_similarities))
 
                             else:
                                 logging.info('No sentences found for {}...'.format(entity_name_and_part))
-                                #import pdb; pdb.set_trace()
 
             if algorithm == 'count':
 

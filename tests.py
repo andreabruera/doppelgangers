@@ -7,7 +7,7 @@ import scipy
 import argparse
 import collections
 import pickle
-import nonce2vec 
+#import nonce2vec 
 import math
 import sys
 import pickle
@@ -22,13 +22,34 @@ from matplotlib import pyplot
 from collections import defaultdict
 from scipy import stats
 from scipy.stats.morestats import wilcoxon
+#from morestats import wilcoxon
 from re import sub
-from nonce2vec.utils.novels_utilities import *
-from nonce2vec.utils.count_based_models_utils import cosine_similarity, normalise
+#from nonce2vec.utils.novels_utilities import *
+#from nonce2vec.utils.count_based_models_utils import cosine_similarity, normalise
 from numpy import dot,sqrt,sum,linalg
 from math import sqrt
 from torch import Tensor
 from collections import defaultdict
+
+from sklearn.preprocessing import normalize as normalise
+
+from numpy.linalg import norm
+
+def normalise(vector):
+    norm_vector = norm(vector)
+    if norm_vector == 0:
+        return vector
+    vector = vector / norm_vector
+    #print(sum([i*i for i in v]))
+    return vector
+
+def cosine_similarity(peer_v, query_v):
+    if len(peer_v) != len(query_v):
+        raise ValueError('Vectors must be of same length')
+    num = numpy.dot(peer_v, query_v)
+    den_a = numpy.dot(peer_v, peer_v)
+    den_b = numpy.dot(query_v, query_v)
+    return num / (math.sqrt(den_a) * math.sqrt(den_b))
 
 def wilcoxon_results(x,y):
     
@@ -318,9 +339,18 @@ for analysis_type, results in to_be_plotted.items():
         pyplot.savefig('{}/histogram_plot.png'.format(path, ))
 
         significance_results = []
-        significance_results.append([lsts[0][0], lsts[1][0], wilcoxon_results(list_one, list_two), numpy.median(list_one), numpy.median(list_two)])
-        significance_results.append([lsts[1][0], lsts[2][0], wilcoxon_results(list_two, list_three), numpy.median(list_two), numpy.median(list_three)])
-        significance_results.append([lsts[0][0], lsts[2][0], wilcoxon_results(list_one, list_three), numpy.median(list_one), numpy.median(list_three)])
+        try:
+            significance_results.append([lsts[0][0], lsts[1][0], wilcoxon_results(list_one, list_two), numpy.median(list_one), numpy.median(list_two)])
+        except ValueError:
+            significance_results.append([lsts[0][0], lsts[1][0], ('Na', 'Na'), numpy.median(list_one), numpy.median(list_two)])
+        try:
+            significance_results.append([lsts[1][0], lsts[2][0], wilcoxon_results(list_two, list_three), numpy.median(list_two), numpy.median(list_three)])
+        except ValueError:
+            significance_results.append([lsts[1][0], lsts[2][0], ('Na', 'Na'), numpy.median(list_two), numpy.median(list_three)])
+        try:
+            significance_results.append([lsts[0][0], lsts[2][0], wilcoxon_results(list_one, list_three), numpy.median(list_one), numpy.median(list_three)])
+        except ValueError:
+            significance_results.append([lsts[0][0], lsts[2][0], ('Na', 'Na'), numpy.median(list_one), numpy.median(list_three)])
         #with open('{}/significance_test_results.txt'.format(path), 'a') as o:
         with open('{}/significance_test_results.txt'.format(path), 'a') as o:
             for s in significance_results:

@@ -3,8 +3,7 @@
 TRAINING_MODE=$1
 NUMBER_AT_A_TIME=$2
 S=1
-NOVELS_FOLDER=novel_aficionados_dataset_one_sentence_per_line
-#NOVELS_FOLDER=repair_bert
+NOVELS_FOLDER=/import/cogsci/andrea/github/novel_aficionados_dataset/novels
 TRAINING_FOLDER=${TRAINING_MODE}_training
 mkdir -p ${TRAINING_FOLDER}
 echo 'Created folder: '${TRAINING_FOLDER}
@@ -24,7 +23,7 @@ for novel in $(ls ${NOVELS_FOLDER});
 
     echo 'Starting with novel ' ${novel} 
     echo 'Number: ' ${BOOK_NUMBER}
-    python3 scripts/experiment.py --on ${TRAINING_MODE}  --folder ${CURRENT_FOLDER} --number ${BOOK_NUMBER} --write_to_file & 
+    python3 experiment.py --on ${TRAINING_MODE}  --folder ${CURRENT_FOLDER} --number ${BOOK_NUMBER} --write_to_file & 
     S=$(($S+1))
     if (($S<=${NUMBER_AT_A_TIME}));
         then
@@ -34,4 +33,6 @@ for novel in $(ls ${NOVELS_FOLDER});
         wait
     fi
 done
+
+python3 tests.py --folder ${TRAINING_MODE}_training
 #wait
