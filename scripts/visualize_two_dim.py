@@ -110,6 +110,7 @@ font_dirs = ['/import/cogsci/andrea/fonts/helvetica_ltd', ]
 font_files = font_manager.findSystemFonts(fontpaths=font_dirs)
 font_list = font_manager.createFontList(font_files)
 font_manager.fontManager.ttflist.extend(font_list)
+#[f.name for f in matplotlib.font_manager.fontManager.ttflist]
 
 matplotlib.rcParams['font.family'] = 'Helvetica LT Std'
 
