@@ -222,9 +222,9 @@ def test_on_novel(args):
     elif algorithm == 'bert':
         import pytorch_pretrained_bert
         from pytorch_pretrained_bert import BertTokenizer, BertForMaskedLM, BertModel
-        model = BertModel.from_pretrained('bert-base-uncased')
+        model = BertModel.from_pretrained('bert-large-uncased')
         model.eval()
-        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        tokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
         #tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', never_split=['[MASK]'])
 
     elif algorithm == 'w2v':
