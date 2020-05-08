@@ -65,6 +65,7 @@ pos_list = ['ADJ', 'ADV', 'CCONJ', 'DET', 'NOUN', 'PRON', 'PROPN', 'VERB']
 window_sizes = ['2', '5', '7', '0']
 length = [k for k in range(len(pos_list))]
 output_folder = 'pos_plots'
+os.makedirs(output_folder, exist_ok=True)
 
 per_novel_results = defaultdict(dict)
 
@@ -102,23 +103,20 @@ for setup_key in setups:
     all_results[setup_key] = current_results
     per_novel_results[setup_key] = aggregated_results
 
-# Now calculating the statistical significance of the differences among POS
+# Now calculating the statistical significance of the differences among POS, only for the novels
 
-for test in tests:
-    #os.makedirs(os.path.join(output_folder, test), exist_ok = True)
-    for window_size in window_sizes:
-        current_folder = os.path.join(output_folder, 'window_{}'.format(window_size), test)
-        os.makedirs(current_folder, exist_ok=True)
-        #proper_name_setup = '{}_proper_names_matched'.format(test)
-        proper_name_list = per_novel_results[('proper_names_matched', test)][window_size]
-        #common_nouns_setup = '{}_common_nouns_unmatched'.format(test)
-        common_nouns_list = per_novel_results[('common_nouns_unmatched', test)][window_size]
-        for i in length:
-            p, e = wilcoxon_results([k[i] for k in proper_name_list], [k[i] for k in common_nouns_list])
-            if args.write_to_file:
-                with open(os.path.join(current_folder, 'significance_results.txt'.format(test, window_size)), 'a') as o:
-                    o.write('Significance results for {}:\n\nP-value:\t{}\nEffect size\t{}\n\nMedian for proper names:\t{}\nMedian for common nouns:\t{}\n\n\n'.format(pos_list[i], p, e, numpy.nanmedian([k[i] for k in proper_name_list]), numpy.nanmedian([k[i] for k in common_nouns_list])))
-            #print('Significance results for {}:\n\nP-value:\t{}\nEffect size\t{}\n\nMedian for proper names:\t{}\nMedian for common nouns:\t{}\n\n\n'.format(pos_list[i], p, e, numpy.nanmedian([k[i] for k in proper_name_list]), numpy.nanmedian([k[i] for k in common_nouns_list])))
+test = 'doppelganger_test'
+for window_size in window_sizes:
+    #proper_name_setup = '{}_proper_names_matched'.format(test)
+    proper_name_list = per_novel_results[('proper_names_matched', test)][window_size]
+    #common_nouns_setup = '{}_common_nouns_unmatched'.format(test)
+    common_nouns_list = per_novel_results[('common_nouns_unmatched', test)][window_size]
+    for i in length:
+        p, e = wilcoxon_results([k[i] for k in proper_name_list], [k[i] for k in common_nouns_list])
+        if args.write_to_file:
+            with open(os.path.join(output_folder, 'window_{}_significance_results.txt'.format(window_size)), 'a') as o:
+                o.write('Significance results for {}:\n\nP-value:\t{}\nEffect size\t{}\n\nMedian for proper names:\t{}\nMedian for common nouns:\t{}\n\n\n'.format(pos_list[i], p, e, numpy.nanmedian([k[i] for k in proper_name_list]), numpy.nanmedian([k[i] for k in common_nouns_list])))
+        #print('Significance results for {}:\n\nP-value:\t{}\nEffect size\t{}\n\nMedian for proper names:\t{}\nMedian for common nouns:\t{}\n\n\n'.format(pos_list[i], p, e, numpy.nanmedian([k[i] for k in proper_name_list]), numpy.nanmedian([k[i] for k in common_nouns_list])))
 
 
 golden = mcd.CSS4_COLORS['goldenrod']
@@ -137,15 +135,12 @@ for key, dictionary in all_results.items():
 labels = ['Common nouns', 'Proper names']
 colors = [teal, golden]
 
-# Making one plot for each test
-for test in tests:
-    # Making one plot per window size
-    for window_size in window_sizes:
+# Making one plot per window size, only for the novels data
+for window_size in window_sizes:
 
-        current_folder = os.path.join(output_folder, 'window_{}'.format(window_size), test)
-        common_data = median_results[('common_nouns_unmatched', test)][window_size]
-        proper_data = median_results[('proper_names_matched', test)][window_size]
-        x_variables = pos_list
+    common_data = median_results[('common_nouns_unmatched', test)][window_size]
+    proper_data = median_results[('proper_names_matched', test)][window_size]
+    x_variables = pos_list
 
-        errorbar_plots = MyBloodyPlots(output_folder=current_folder, font_folder='/import/cogsci/andrea/fonts', x_variables=x_variables, y_variables=[common_data, proper_data], x_axis='', y_axis='Median normalized frequency', labels=labels, colors=colors, identifier='{}_{}'.format(test, window_size), title='Window {} - POS analysis for the {} test'.format(window_size, re.sub('_', ' ', test).capitalize()), y_ticks=True)
-        errorbar_plots.plot_dat(plot_type='errorbar_two_sets')
+    errorbar_plots = MyBloodyPlots(output_folder=output_folder, font_folder='/import/cogsci/andrea/fonts', x_variables=x_variables, y_variables=[common_data, proper_data], x_axis='', y_axis='Median normalized frequency', labels=labels, colors=colors, identifier='window_{}'.format(window_size), title='Window {} - POS analysis for the {}'.format(window_size, re.sub('_', ' ', test).capitalize()), y_ticks=True)
+    errorbar_plots.plot_dat(plot_type='errorbar_two_sets')
