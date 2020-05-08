@@ -62,9 +62,9 @@ setups = [(tr, te) for tr in training_types for te in tests]
 all_results = defaultdict(dict)
 #pos_list = ['ADJ', 'ADP', 'ADV', 'AUX', 'CONJ', 'CCONJ', 'DET', 'INTJ', 'NOUN', 'NUM', 'PART', 'PRON', 'PROPN', 'SCONJ', 'VERB']
 pos_list = ['ADJ', 'ADV', 'CCONJ', 'DET', 'NOUN', 'PRON', 'PROPN', 'VERB']
-window_sizes = ['2', '5', '7', '0']
+window_sizes = ['2', '5', '7', '10']
 length = [k for k in range(len(pos_list))]
-output_folder = 'pos_plots'
+output_folder = 'plots/pos'
 os.makedirs(output_folder, exist_ok=True)
 
 per_novel_results = defaultdict(dict)
@@ -93,7 +93,7 @@ for setup_key in setups:
         try:
             current_pickle = pickle.load(open('{}.pickle'.format(os.path.join(test_folder, novel_number)), 'rb'))
             for k, v in current_pickle.items():
-                window_size = k[-1]
+                window_size = re.sub('\D', '', k)
                 current_results[window_size].append(v)
                 current_novel[window_size].append(v)
             for w in window_sizes:

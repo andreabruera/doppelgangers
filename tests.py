@@ -343,7 +343,7 @@ golden = mcd.CSS4_COLORS['goldenrod']
 teal = mcd.CSS4_COLORS['steelblue']
 current_font_folder = '/import/cogsci/andrea/fonts'
 models = [(re.sub('_', ' ', m)).capitalize() for m in final_results.keys()]
-os.makedirs('final_plots', exist_ok=True)
+os.makedirs('plots', exist_ok=True)
 
 # Data for the main results and the correlational analyses
 
@@ -363,15 +363,24 @@ for model_name, setup_keys in histogram_results.items():
         t = re.sub('_test', '', t)
         plottable_histogram[t].append((setup_keys['{}_test_common_nouns_unmatched'.format(t)], setup_keys['{}_test_proper_names_matched'.format(t)]))
 
+# Creating the folders for the plots
+
+main_folder = 'plots/main_results'
+corr_folder = 'plots/correlations'
+hist_folder = 'plots/histograms'
+os.makedirs(main_folder, exist_ok=True)
+os.makedirs(corr_folder, exist_ok=True)
+os.makedirs(hist_folder, exist_ok=True)
+
 # Plotting the main results
 
 for test, results in plottable_results.items():
-    results_plots = MyBloodyPlots(output_folder='final_plots', font_folder=current_font_folder, x_variables=models, y_variables=results, x_axis='', y_axis='Median rank', labels=['Common nouns', 'Proper names'], title='Median ranking results for the {} test'.format(test.capitalize()), identifier=test, colors=[teal, golden], y_invert=True, x_ticks=True)
+    results_plots = MyBloodyPlots(output_folder=main_folder, font_folder=current_font_folder, x_variables=models, y_variables=results, x_axis='', y_axis='Median rank', labels=['Common nouns', 'Proper names'], title='Median ranking results for the {} test'.format(test.capitalize()), identifier=test, colors=[teal, golden], y_invert=True, x_ticks=True)
     results_plots.plot_dat('two_lines')
 
 # Plotting the correlational analyses
 
-    corr_plot = MyBloodyPlots(output_folder='final_plots', font_folder=current_font_folder, x_variables=models, y_variables=[novel_length, number_of_characters, std_of_character_mentions], x_axis='', y_axis='Spearman correlation', labels=['Novel length', 'Number of characters', 'Std of character mentions'], title='Correlational analysis for the results on proper names'.format(test.capitalize()), identifier='correlations', colors=['darkorange', 'orchid', 'darkgrey'], x_ticks=True)
+    corr_plot = MyBloodyPlots(output_folder=corr_folder, font_folder=current_font_folder, x_variables=models, y_variables=[novel_length, number_of_characters, std_of_character_mentions], x_axis='', y_axis='Spearman correlation', labels=['Novel length', 'Number of characters', 'Std of character mentions'], title='Correlational analysis for the results on proper names'.format(test.capitalize()), identifier='correlations', colors=['darkorange', 'orchid', 'darkgrey'], x_ticks=True)
     corr_plot.plot_dat('three_bars')
 
 # Plotting the histogram analyses
@@ -379,7 +388,7 @@ for test, results in plottable_results.items():
 for test_name, results in plottable_histogram.items():
     for results_index, variables_tuple in enumerate(results):
         model = models[results_index]
-        hist_plots = MyBloodyPlots(output_folder='final_plots', font_folder=current_font_folder, x_variables=[], y_variables=variables_tuple, x_axis='Median rank', y_axis='Frequency (N=59)', labels=['Common nouns', 'Proper names'], title='{} model - Histogram of the median ranks for the {} test'.format(model, test_name.capitalize()), identifier='{}_{}'.format(test_name.lower(), model.lower()), colors=[teal, golden], y_invert=False, y_ticks=True, x_ticks=True)
+        hist_plots = MyBloodyPlots(output_folder=hist_folder, font_folder=current_font_folder, x_variables=[], y_variables=variables_tuple, x_axis='Median rank', y_axis='Frequency (N=59)', labels=['Common nouns', 'Proper names'], title='{} model - Histogram of the median ranks for the {} test'.format(model, test_name.capitalize()), identifier='{}_{}'.format(test_name.lower(), model.lower()), colors=[teal, golden], y_invert=False, y_ticks=True, x_ticks=True)
         hist_plots.plot_dat('histogram_two_sets')
 
 
@@ -531,6 +540,7 @@ import pdb; pdb.set_trace()
                     ambiguity_percentages.append(percent)
                 final_percent=numpy.mean(ambiguity_percentages)
                 print('Percentage of ambiguous sentences of all sentences used for training (containing more than one character): {} %\n'.format(round(final_percent, 3)))
+
                 total_evaluations_runs_counter+=1
 '''
 if args.make_plots:
