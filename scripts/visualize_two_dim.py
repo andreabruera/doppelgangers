@@ -101,11 +101,22 @@ def get_colors_dict(test, proper_names, common_nouns):
                 color_dict['{}_{}'.format(na, label)] = colors_gen[c]
     return color_dict
 
-'''
-matplotlib.font_manager.findSystemFonts(fontpaths=None, fontext='ttf')
-rcParams['font.family']='serif'
-rcParams['font.serif']=['Computer Modern Sans Serif', 'New Century Schoolbook', 'Nimbus Roman No9 L']
-'''
+def plot_lines(output_folder, models, proper_list, common_list, title='', x_axis='', y_axis=''):
+    plt.plot(models, proper_list, label='Proper names', marker='o', mec='k', mfc='white', )
+    for a, k in zip(models, proper_list):
+        plt.annotate(round(k, 2), (a, k), textcoords='offset points', xytext=(0,10), ha='center')
+    plt.plot(models, common_list, label='Common nouns', marker='o', mec='k', mfc='white')
+    for a, k in zip(models, common_list):
+        plt.annotate(round(k, 2), (a, k), textcoords='offset points', xytext=(0,10), ha='center')
+    plt.xticks(models, rotation = 45)
+    plt.title(title, fontsize='xx-large')
+    plt.xlabel(x_axis)
+    plt.ylabel(y_axis)
+    plt.legend()
+    plt.tight_layout(pad=3.0)
+
+    plt.savefig(os.path.join(output_folder, 'line_plot.png'), transparent=True, dpi=600)
+
 font_dirs = ['/import/cogsci/andrea/fonts/helvetica_ltd', ]
 font_files = font_manager.findSystemFonts(fontpaths=font_dirs)
 font_list = font_manager.createFontList(font_files)

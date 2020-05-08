@@ -2,7 +2,6 @@ import os
 import numpy
 import matplotlib
 import matplotlib.cm as cm
-import matplotlib.font_manager
 import scipy
 import argparse
 import collections
@@ -17,8 +16,12 @@ import re
 import logging
 import dill
 import matplotlib._color_data as mcd
+import tqdm
 
+from data.mybloodyplots.mybloodyplots import MyBloodyPlots
+from tqdm import tqdm
 from matplotlib import pyplot
+from matplotlib import font_manager as font_manager
 from collections import defaultdict
 from scipy import stats
 from scipy.stats.morestats import wilcoxon
@@ -109,253 +112,276 @@ def evaluation(entity_vectors, folder, entities_limit = 1000):
 
     return ranks
 
-numpy.seterr(all='raise')
-
-logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
 
 parser=argparse.ArgumentParser()
-parser.add_argument('--folder', required=True, type = str, help = 'Specify the name of the folder where the pickles are contained')
-parser.add_argument('--make_plots', required=False, action='store_true')
+parser.add_argument('--pickles_folder', required=True, type = str, help = 'Specify the name of the folder where the pickles are contained')
+parser.add_argument('--count_model_folder', required=True, type = str, help = 'Specify the name of the folder where the count vectors are stored')
+parser.add_argument('--make_plots', required=False, action='store_true', help = 'Indicates whether to plot the results or not')
+parser.add_argument('--write_to_file', required=False, action='store_true', help = 'Indicates whether to write to file or not')
 args = parser.parse_args()
 
+# Petty stuff setup
+
+numpy.seterr(all='raise')
+logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
+
+# Setting up the evaluation
+
 cwd = os.getcwd()
-big_folder = '{}/{}'.format(cwd, args.folder)
+folders = os.listdir(args.pickles_folder)
+
+final_results = defaultdict(dict)
+histogram_results = defaultdict(dict)
 training_types = ['proper_names_matched', 'common_nouns_unmatched', 'common_nouns_matched']
 tests = ['doppelganger_test', 'quality_test'] 
 setups = [[tr, te] for tr in training_types for te in tests]
-all_results = defaultdict(dict)
-number_of_characters = defaultdict(dict)
-doppelganger_entities_limit = defaultdict(int)
-quality_entities_limit = defaultdict(int)
 
-novel_lengths = defaultdict(int)
-characters_std = defaultdict(float)
+# Starting the evaluation
 
-if 'count' in args.folder:
-    with open('count_models/count_wiki_2/count_wiki_2_cooccurrences.pickle', 'rb') as word_cooccurrences_file:
-        background_vectors_length = max(dill.load(word_cooccurrences_file).keys())
-        logging.info(background_vectors_length)
+if 'bert_base_training' in folders and 'bert_large_training'in folders and 'elmo_training' in folders and 'n2v_training' in folders and 'w2v_training' in folders and 'count_training' in folders:
+    folders = ['count_training', 'w2v_training', 'n2v_training', 'elmo_training', 'bert_base_training', 'bert_large_training']
 
-for setup in setups:
-    
-    logging.info('Currently evaluating performance on setup: {}'.format(setup))
+for folder in tqdm(folders):
 
-    training = setup[0]
-    test = setup[1]
-    setup_key = '{}_{}'.format(test, training)
-    current_results = defaultdict(dict)
-    '''
-    plot_median = defaultdict(float)
-    plot_mrr={}
-    lengths= defaultdict(int)
-    names={}
-    characters_dict = defaultdict(int)
-    characters_std={}
-    total_evaluations_runs_counter=0
-    characters=[]
-    list_var_mrr=[]
-    list_var_median=[]
-    list_var_mean=[]
-    '''
+    model = re.sub('_training', '', folder)
+    big_folder = os.path.join(args.pickles_folder, folder)
+    all_results = defaultdict(dict)
+    logging.info('Current model: {}'.format(model))
 
-    for novel in os.listdir(big_folder):
-        #print(novel)
-        #setup_shorthand=big.replace(cwd, '') 
-        novel_folder = '{}/{}'.format(big_folder, novel)
-        novel_number = re.sub('_no_header.txt', '', [filename for filename in os.listdir('{}/novel'.format(novel_folder)) if 'no_header' in filename][0])
+    # Utilities
+    doppelganger_entities_limit = defaultdict(int)
+    quality_entities_limit = defaultdict(int)
+    if 'count' in folder:
+        with open(os.path.join(args.count_model_folder, 'count_wiki_2/count_wiki_2_cooccurrences.pickle'), 'rb') as word_cooccurrences_file:
+            background_vectors_length = max(dill.load(word_cooccurrences_file).keys())
+            #logging.info(background_vectors_length)
 
-        test_folder = '{}/{}/{}'.format(novel_folder, training, test)
-        try:
-            current_pickle = pickle.load(open('{}/{}.pickle'.format(test_folder, novel_number), 'rb'))
-            if 'count' in args.folder:
-                entity_dict = defaultdict(numpy.ndarray)
-                for e, v in current_pickle.items():
-                    entity_dict[e] = v[0][:background_vectors_length]
-            else:
-                entity_dict = current_pickle
+    # Variables for the correlational analyses
 
-            if test == 'quality_test':
-                full_novel_pickle = pickle.load(open('{}/{}/doppelganger_test/{}.pickle'.format(novel_folder, training, novel_number), 'rb'))
-                for e, v in full_novel_pickle.items():
-                    if e[-1] == 'a':
-                        if 'count' in args.folder:
-                            entity_dict[e] = v[0][:background_vectors_length]
-                        else:
-                            entity_dict[e] = v
+    number_of_characters = defaultdict(dict)
+    novel_lengths = defaultdict(int)
+    characters_std = defaultdict(float)
 
-            if test == 'doppelganger_test':
-                if 'proper' not in training:
-                    current_results[novel] = evaluation(entity_dict, test_folder, doppelganger_entities_limit[novel])
-                else:
-                    current_results[novel] = evaluation(entity_dict, test_folder)
-                    doppelganger_entities_limit[novel] = int(len(current_results[novel])/2)
-            else:
-                if quality_entities_limit[novel] > 0:
-                    current_results[novel] = evaluation(entity_dict, test_folder, quality_entities_limit[novel])
-                    quality_entities_limit[novel] = min(quality_entities_limit[novel], len(current_results[novel])/2)
-                else:
-                    current_results[novel] = evaluation(entity_dict, test_folder)
-                    quality_entities_limit[novel] = int(len(current_results[novel])/2)
+    # Collecting results per novel, once per experimental setup
+
+    for setup in setups:
+        
+
+        training = setup[0]
+        test = setup[1]
+        setup_key = '{}_{}'.format(test, training)
+        current_results = defaultdict(dict)
+        #logging.info('Currently evaluating performance on setup: {}'.format(setup_key))
+
+        for novel in os.listdir(big_folder):
+
+            novel_folder = '{}/{}'.format(big_folder, novel)
+            novel_number = re.sub('_no_header.txt', '', [filename for filename in os.listdir('{}/novel'.format(novel_folder)) if 'no_header' in filename][0])
+
+            test_folder = '{}/{}/{}'.format(novel_folder, training, test)
+            try:
+
+                # Acquiring the information needed for the correlational analyses for the novel at hand
 
                 if training == 'proper_names_matched':
                     novel_lengths[novel] = len([w for l in open('{}/novel/{}_no_header.txt'.format(novel_folder, novel_number)).readlines() for w in l.split()])
                     characters_std[novel] = numpy.nanstd([int(l.split('\t')[0]) for l in open('{}/characters_list_{}.txt'.format(novel_folder, novel_number)).readlines() if int(l.split('\t')[0]) >= 10])
-            assert len(current_results[novel]) % 2 == 0
-        except FileNotFoundError:
-            logging.info('Could not find the file for {}...'.format(novel))
-    all_results[setup_key] = current_results
 
+                # Loading the entity vectors
 
-'''
-doppelganger_entities_amount = defaultdict(int)
-for n, lst in all_results['doppelganger_test_proper_names_matched'].items():
-    doppelganger_entities_amount[n] = int(len(lst)/2)
+                current_pickle = pickle.load(open('{}/{}.pickle'.format(test_folder, novel_number), 'rb'))
+                if 'count' in folder:
+                    entity_dict = defaultdict(numpy.ndarray)
+                    for e, v in current_pickle.items():
+                        entity_dict[e] = v[0][:background_vectors_length]
+                else:
+                    entity_dict = current_pickle
 
-quality_entities_amount = defaultdict(int)
-proper_entities_amount = defaultdict(int)
-common_entities_amount = defaultdict(int)
-for n, lst in all_results['quality_test_proper_names_matched'].items():
-    proper_entities_amount[n] = int(len(lst)/2)
-for n, lst in all_results['quality_test_common_nouns_matched'].items():
-    common_entities_amount[n] = int(len(lst)/2)
-for n in proper_entities_amount.keys():
-    quality_entities_amount[n] = min(proper_entities_amount[n], common_entities_amount[n])
+                # Preparing the entity vectors for the quality test
 
-filtered_results = defaultdict(dict)
+                if test == 'quality_test':
+                    full_novel_pickle = pickle.load(open('{}/{}/doppelganger_test/{}.pickle'.format(novel_folder, training, novel_number), 'rb'))
+                    for e, v in full_novel_pickle.items():
+                        if e[-1] == 'a':
+                            if 'count' in folder:
+                                entity_dict[e] = v[0][:background_vectors_length]
+                            else:
+                                entity_dict[e] = v
 
-for setup in setups:
-    training = setup[0]
-    test = setup[1]
-    setup_key = '{}_{}'.format(test, training)
-    if test == 'doppelganger_test' and 'common_nouns' in training:
-        filtered_novels = defaultdict(list)
-        for n, r in all_results[setup_key].items():
-            part_a = [k for k in r if k[0][-1] == 'a'][:doppelganger_entities_amount[n]]
-            part_b = [k for k in r if k[0][-1] == 'b'][:doppelganger_entities_amount[n]]
-            for a, b in zip(part_a, part_b):
-                filtered_novels[n].append(a)
-                filtered_novels[n].append(b)
-        filtered_results[setup_key] = filtered_novels
-    elif test == 'doppelganger_test' and 'proper_names' in training:
-        filtered_results[setup_key] = all_results[setup_key]
-    else:
-        filtered_novels = defaultdict(list)
-        for n, r in all_results[setup_key].items():
-            part_a = [k for k in r if k[0][-1] == 'a'][:quality_entities_amount[n]]
-            part_b = [k for k in r if k[0][-1] == 'b'][:quality_entities_amount[n]]
-            for a, b in zip(part_a, part_b):
-                filtered_novels[n].append(a)
-                filtered_novels[n].append(b)
-        filtered_results[setup_key] = filtered_novels
+                # Carrying out the evaluation for the doppelganger test
 
-#with open('filtered_results.pickle', 'wb') as o:
-with open('filtered_results.pickle', 'rb') as o:
-    #pickle.dump(filtered_results, o)
-    filtered_results = pickle.load(o)
-'''
-filtered_results = all_results
-post_aggregation_results_median = defaultdict(list)
-overall_aggregation_results_median = defaultdict(list)
+                if test == 'doppelganger_test':
+                    if 'proper' not in training:
+                        current_results[novel] = evaluation(entity_dict, test_folder, doppelganger_entities_limit[novel])
+                    else:
+                        current_results[novel] = evaluation(entity_dict, test_folder)
+                        doppelganger_entities_limit[novel] = int(len(current_results[novel])/2)
+                
+                # Carrying out the evaluation for the quality test
 
-for setup in setups:
-    training = setup[0]
-    test = setup[1]
-    setup_key = '{}_{}'.format(test, training)
-    results = filtered_results[setup_key]
-    across_novels_results = defaultdict(list)
-    for novel, results_list in results.items():
-        figures = [k[1] for k in results_list]
-        reciprocal_ranks = [1/k[1] for k in results_list]
-        amount_of_entities = len(results_list)/2
-        novel_median = numpy.median(figures)
-        novel_average = numpy.average(figures)
-        novel_mrr = numpy.average(reciprocal_ranks)
-        novel_std = numpy.std(figures)
-        output_file = '{}/{}/{}/{}/final_results.txt'.format(args.folder, novel, training, test)
-        with open(output_file, 'w') as o:
-            o.write('Test: {}\nResults for: {}\nModel used: {}\n\nWithin-novel median: {}\nWithin-novel average: {}\nWithin-novel MRR: {}\nWithin-novel standard deviation of the scores: {}\nAmount of entities considered: {}'.format(re.sub('_', ' ', test), novel, re.sub('_', ' ', training), novel_median, novel_average, novel_mrr, novel_std, amount_of_entities))
-        across_novels_results[novel] = [novel_median, novel_average, novel_mrr, novel_std, amount_of_entities]
-    list_of_medians = [m[0] for n, m in across_novels_results.items()]
-    across_median = numpy.nanmedian(list_of_medians)
-    across_average = numpy.nanmean([m[1] for n, m in across_novels_results.items()])
-    across_mrr = numpy.nanmean([m[2] for n, m in across_novels_results.items()])
-    across_std = numpy.nanmedian([m[3] for n, m in across_novels_results.items()])
-    list_of_entities = [m[4] for n, m in across_novels_results.items()]
-    across_entities = numpy.nanmedian(list_of_entities)
+                else:
+                    if quality_entities_limit[novel] > 0:
+                        current_results[novel] = evaluation(entity_dict, test_folder, quality_entities_limit[novel])
+                        quality_entities_limit[novel] = min(quality_entities_limit[novel], len(current_results[novel])/2)
+                    else:
+                        current_results[novel] = evaluation(entity_dict, test_folder)
+                        quality_entities_limit[novel] = int(len(current_results[novel])/2)
 
+                assert len(current_results[novel]) % 2 == 0
+            except FileNotFoundError:
+                logging.info('Could not find the file for {}...'.format(novel))
+        all_results[setup_key] = current_results
+
+    model_results = defaultdict(dict)
+    model_histogram = defaultdict(list)
+
+    for setup in setups:
+        training = setup[0]
+        test = setup[1]
+        setup_key = '{}_{}'.format(test, training)
+        results = all_results[setup_key]
+        across_novels_results = defaultdict(list)
+
+        # Averaging the results within the novels
+
+        for novel, results_list in results.items():
+            ranks = [k[1] for k in results_list]
+            reciprocal_ranks = [1/k[1] for k in results_list]
+            amount_of_entities = len(results_list)/2
+            novel_median = numpy.median(ranks)
+            novel_average = numpy.average(ranks)
+            novel_mrr = numpy.average(reciprocal_ranks)
+            novel_std = numpy.std(ranks)
+            across_novels_results[novel] = [novel_median, novel_average, novel_mrr, novel_std, amount_of_entities]
+
+            # Writing them down to file
+
+            if args.write_to_file:
+                output_file = '{}/{}/{}/{}/final_results.txt'.format(folder, novel, training, test)
+                with open(output_file, 'w') as o:
+                    o.write('Test: {}\nResults for: {}\nModel used: {}\n\nWithin-novel median: {}\nWithin-novel average: {}\nWithin-novel MRR: {}\nWithin-novel standard deviation of the scores: {}\nAmount of entities considered: {}'.format(re.sub('_', ' ', test), novel, re.sub('_', ' ', training), novel_median, novel_average, novel_mrr, novel_std, amount_of_entities))
+
+        # Averaging results across the novels
+
+        list_of_medians = [m[0] for n, m in across_novels_results.items()]
+        across_median = numpy.nanmedian(list_of_medians)
+        across_average = numpy.nanmean([m[1] for n, m in across_novels_results.items()])
+        across_average_mrr = numpy.nanmean([m[2] for n, m in across_novels_results.items()])
+        across_median_mrr = numpy.nanmedian([m[2] for n, m in across_novels_results.items()])
+        across_average_std = numpy.nanmean([m[3] for n, m in across_novels_results.items()])
+        across_median_std = numpy.nanmedian([m[3] for n, m in across_novels_results.items()])
+        number_of_novels_used = len(list_of_medians)
+
+        # Acquiring the last missing variable for the correlational analyses, the number of characters considered
+
+        list_of_entities = [m[4] for n, m in across_novels_results.items()]
+        across_entities = numpy.nanmedian(list_of_entities)
+
+        # Carrying out the correlational analysis
+        try:
+            number_of_characters_correlation = scipy.stats.spearmanr(list_of_medians, list_of_entities)[0]
+            novel_length_correlation = scipy.stats.spearmanr(list_of_medians, [k[1] for k in novel_lengths.items()])[0]
+            std_of_characters_correlation = scipy.stats.spearmanr(list_of_medians, [k[1] for k in characters_std.items()])[0]
+        except FloatingPointError:
+            number_of_characters_correlation = numpy.nan
+            novel_length_correlation = numpy.nan
+            std_of_characters_correlation = numpy.nan
+
+        # Appending the results for the final plots
+
+        model_results[setup_key] = {'average_rank' : across_average, 'median_rank' : across_median, 'average_mrr' : across_average_mrr, 'median_mrr' : across_median_mrr, 'corr_num_characters' : number_of_characters_correlation, 'corr_novel_length' : novel_length_correlation, 'corr_std_characters_mentions' : std_of_characters_correlation}
+
+        model_histogram[setup_key] = list_of_medians
+
+        # Writing down the results
+
+        if args.write_to_file:
+            across_path = 'results_per_model/{}/{}'.format(folder, test)
+            number_of_novels_used = len(across_novels_results.keys())
+            os.makedirs(across_path, exist_ok = True)
+            with open('{}/details_per_training.txt'.format(across_path), 'a') as o:
+                o.write('\nTest: {}\nLinguistic category considered: {}\n\nAcross-novels median of the medians: {}\nAcross-novels average of the averages: {}\nAcross-novels average of the MRRs: {}\nAcross-novels average standard deviation of the scores: {}\nAcross-novels median of the amount of entities considered: {}\nNumber of novels used: {}\n\nCorrelation with number of characters: {}\nCorrelation with the length of the novels: {}\nCorrelation with the standard deviation of the character\'s frequencies: {}\n'.format(re.sub('_', ' ', test), re.sub('_', ' ', training), across_median, across_average, across_average_mrr, across_average_std, across_entities, number_of_novels_used, number_of_characters_correlation, novel_length_correlation, std_of_characters_correlation))
+
+        # Printing the results
+
+        logging.info('\nTest: {}\nLinguistic category considered: {}\n\nAcross-novels median of the medians: {}\nAcross-novels average of the averages: {}\nAcross-novels average of the MRRs: {}\nAcross-novels average standard deviation of the scores: {}\nAcross-novels median of the amount of entities considered: {}\nNumber of novels used: {}\n\nCorrelation with number of characters: {}\nCorrelation with the length of the novels: {}\nCorrelation with the standard deviation of the character\'s frequencies: {}\n'.format(re.sub('_', ' ', test), re.sub('_', ' ', training), across_median, across_average, across_average_mrr, across_average_std, across_entities, number_of_novels_used, number_of_characters_correlation, novel_length_correlation, std_of_characters_correlation))
+
+    final_results[model] = model_results
+    histogram_results[model] = model_histogram
+   
+    '''
+
+    # Comparing the statistical significance across different conditions
+
+    significance_results = []
     try:
-        number_of_characters_correlation = scipy.stats.spearmanr(list_of_medians, list_of_entities)[0]
-        novel_length_correlation = scipy.stats.spearmanr(list_of_medians, [k[1] for k in novel_lengths.items()])[0]
-        std_of_characters_correlation = scipy.stats.spearmanr(list_of_medians, [k[1] for k in characters_std.items()])[0]
-    except FloatingPointError:
-        number_of_characters_correlation = 'nan'
-        novel_length_correlation = 'nan'
-        std_of_characters_correlation = 'nan'
-    across_path = 'results_per_model/{}/{}'.format(args.folder, test)
-    number_of_novels_used = len(across_novels_results.keys())
-    os.makedirs(across_path, exist_ok = True)
-    with open('{}/details_per_training.txt'.format(across_path), 'a') as o:
-        o.write('\nTest: {}\nModel used: {}\n\nAcross-novels median of the medians: {}\nAcross-novels average of the averages: {}\nAcross-novels average of the MRRs: {}\nAcross-novels median standard deviation of the scores: {}\nAcross-novels median of the amount of entities considered: {}\nNumber of novels used: {}\n\nCorrelation with number of characters: {}\nCorrelation with the length of the novels: {}\nCorrelation with the standard deviation of the character\'s frequencies: {}\n'.format(re.sub('_', ' ', test), re.sub('_', ' ', training), across_median, across_average, across_mrr, across_std, across_entities, number_of_novels_used, number_of_characters_correlation, novel_length_correlation, std_of_characters_correlation))
-    post_aggregation_median = [m[0] for n, m in across_novels_results.items()]
-    overall_aggregation_median = [r[1] for n, lst in results.items() for r in lst]
-    post_aggregation_results_median[test].append([training, post_aggregation_median])
-    overall_aggregation_results_median[test].append([training, overall_aggregation_median])
+        significance_results.append([lsts[0][0], lsts[1][0], wilcoxon_results(list_one, list_two), numpy.median(list_one), numpy.median(list_two)])
+    except ValueError:
+        significance_results.append([lsts[0][0], lsts[1][0], ('Na', 'Na'), numpy.median(list_one), numpy.median(list_two)])
+    try:
+        significance_results.append([lsts[1][0], lsts[2][0], wilcoxon_results(list_two, list_three), numpy.median(list_two), numpy.median(list_three)])
+    except ValueError:
+        significance_results.append([lsts[1][0], lsts[2][0], ('Na', 'Na'), numpy.median(list_two), numpy.median(list_three)])
+    try:
+        significance_results.append([lsts[0][0], lsts[2][0], wilcoxon_results(list_one, list_three), numpy.median(list_one), numpy.median(list_three)])
+    except ValueError:
+        significance_results.append([lsts[0][0], lsts[2][0], ('Na', 'Na'), numpy.median(list_one), numpy.median(list_three)])
+    #with open('{}/significance_test_results.txt'.format(path), 'a') as o:
+    with open('{}/significance_test_results.txt'.format(path), 'a') as o:
+        for s in significance_results:
+            o.write('Comparison between:\n\n\t{} - median: {}\n\t{} - median: {}\n\nP-value: {}\nEffect size: {}\n\n\n'.format(s[0], s[3], s[1], s[4], s[2][0], s[2][1]))
+    '''
 
-to_be_plotted = defaultdict(dict)
-to_be_plotted['novel_by_novel'] = post_aggregation_results_median
-to_be_plotted['overall'] = overall_aggregation_results_median
+# Reorganizing the data for plotting out the final results
 
-for analysis_type, results in to_be_plotted.items():
-    for t, lsts in results.items():
-        path = 'results_per_model/{}/{}/{}'.format(args.folder, t, analysis_type)
-        os.makedirs(path, exist_ok = True)
+# A reminder: model_results[setup_key] = {'average_rank' : across_average, 'median_rank' : across_median, 'average_mrr' : across_average_mrr, 'median_mrr' : across_median_mrr, 'corr_num_characters' : number_of_characters_correlation, 'corr_novel_length' : novel_length_correlation, 'corr_std_characters_mentions' : std_of_characters_correlation}
+plottable_results = defaultdict(list)
+novel_length = []
+number_of_characters = []
+std_of_character_mentions = []
+golden = mcd.CSS4_COLORS['goldenrod']
+teal = mcd.CSS4_COLORS['steelblue']
+current_font_folder = '/import/cogsci/andrea/fonts'
+models = [(re.sub('_', ' ', m)).capitalize() for m in final_results.keys()]
+os.makedirs('final_plots', exist_ok=True)
 
-        length = int(min(len(lsts[0][1]), len(lsts[1][1]), len(lsts[2][1])))
-        maximum = int(max(max(lsts[0][1]), max(lsts[1][1]), max(lsts[2][1])))
-        if analysis_type == 'overall':
-            quantile = int(max(numpy.quantile(lsts[0][1], 0.95), numpy.quantile(lsts[1][1], 0.95), numpy.quantile(lsts[2][1], 0.95)))
-        else:
-            quantile = int(max(numpy.quantile(lsts[0][1], 1), numpy.quantile(lsts[1][1], 1), numpy.quantile(lsts[2][1], 1)))
-        list_one = lsts[0][1][:length]
-        list_two = lsts[1][1][:length]
-        list_three = lsts[2][1][:length]
+# Data for the main results and the correlational analyses
 
-        golden = mcd.CSS4_COLORS['goldenrod']
-        teal = mcd.CSS4_COLORS['steelblue']
+for model_name, setup_keys in final_results.items():
+    for t in tests:
+        t = re.sub('_test', '', t)
+        plottable_results[t].append((setup_keys['{}_test_common_nouns_unmatched'.format(t)]['median_rank'], setup_keys['{}_test_proper_names_matched'.format(t)]['median_rank']))
+    novel_length.append(setup_keys['doppelganger_test_proper_names_matched']['corr_novel_length'])
+    number_of_characters.append(setup_keys['doppelganger_test_proper_names_matched']['corr_num_characters'])
+    std_of_character_mentions.append(setup_keys['doppelganger_test_proper_names_matched']['corr_std_characters_mentions'])
 
-        barWidth = 0.2
-        pyplot.clf()
-        pyplot.xlabel('Median evaluation score')
-        pyplot.ylabel('Frequency')
-        position_one = [a for a in range(1,maximum+1)]
-        #pyplot.hist([list_one,list_two,list_three], bins = numpy.arange(quantile)+1, range = (0, quantile), label = [re.sub('_', ' ', lsts[0][0]).capitalize(), re.sub('_', ' ', lsts[1][0]).capitalize(), re.sub('_', ' ', lsts[2][0]).capitalize()], align = 'mid', edgecolor = 'white')
-        pyplot.hist([list_one, list_three], bins = numpy.arange(quantile)+1, range = (0, quantile), label = [re.sub('_', ' ', lsts[0][0]).capitalize(), re.sub('_', ' ', lsts[2][0]).capitalize()], align = 'mid', edgecolor = 'white', color = [golden, teal])
-        
-        #pyplot.title('Results for the test:    {}\nModel:    {}\nAnalysis type:    {}'.format(re.sub('_', ' ', t).capitalize(), re.sub('_training', '', args.folder).capitalize(), re.sub('_', ' ', analysis_type).capitalize()), wrap = True, multialignment = 'left')
-        pyplot.title('Results for the {}\nModel:    {}\n'.format(re.sub('_', ' ', t).capitalize(), re.sub('_training', '', args.folder).capitalize()), wrap = True, multialignment = 'left')
-        pyplot.legend()
-        pyplot.tight_layout()
-        pyplot.subplots_adjust(top=0.85)
-        pyplot.savefig('{}/histogram_plot.png'.format(path, ))
+# Data for the histogram
 
-        significance_results = []
-        try:
-            significance_results.append([lsts[0][0], lsts[1][0], wilcoxon_results(list_one, list_two), numpy.median(list_one), numpy.median(list_two)])
-        except ValueError:
-            significance_results.append([lsts[0][0], lsts[1][0], ('Na', 'Na'), numpy.median(list_one), numpy.median(list_two)])
-        try:
-            significance_results.append([lsts[1][0], lsts[2][0], wilcoxon_results(list_two, list_three), numpy.median(list_two), numpy.median(list_three)])
-        except ValueError:
-            significance_results.append([lsts[1][0], lsts[2][0], ('Na', 'Na'), numpy.median(list_two), numpy.median(list_three)])
-        try:
-            significance_results.append([lsts[0][0], lsts[2][0], wilcoxon_results(list_one, list_three), numpy.median(list_one), numpy.median(list_three)])
-        except ValueError:
-            significance_results.append([lsts[0][0], lsts[2][0], ('Na', 'Na'), numpy.median(list_one), numpy.median(list_three)])
-        #with open('{}/significance_test_results.txt'.format(path), 'a') as o:
-        with open('{}/significance_test_results.txt'.format(path), 'a') as o:
-            for s in significance_results:
-                o.write('Comparison between:\n\n\t{} - median: {}\n\t{} - median: {}\n\nP-value: {}\nEffect size: {}\n\n\n'.format(s[0], s[3], s[1], s[4], s[2][0], s[2][1]))
+plottable_histogram = defaultdict(list)
+for model_name, setup_keys in histogram_results.items():
+    for t in tests:
+        t = re.sub('_test', '', t)
+        plottable_histogram[t].append((setup_keys['{}_test_common_nouns_unmatched'.format(t)], setup_keys['{}_test_proper_names_matched'.format(t)]))
+
+# Plotting the main results
+
+for test, results in plottable_results.items():
+    results_plots = MyBloodyPlots(output_folder='final_plots', font_folder=current_font_folder, x_variables=models, y_variables=results, x_axis='', y_axis='Median rank', labels=['Common nouns', 'Proper names'], title='Median ranking results for the {} test'.format(test.capitalize()), identifier=test, colors=[teal, golden], y_invert=True, x_ticks=True)
+    results_plots.plot_dat('two_lines')
+
+# Plotting the correlational analyses
+
+    corr_plot = MyBloodyPlots(output_folder='final_plots', font_folder=current_font_folder, x_variables=models, y_variables=[novel_length, number_of_characters, std_of_character_mentions], x_axis='', y_axis='Spearman correlation', labels=['Novel length', 'Number of characters', 'Std of character mentions'], title='Correlational analysis for the results on proper names'.format(test.capitalize()), identifier='correlations', colors=['darkorange', 'orchid', 'darkgrey'], x_ticks=True)
+    corr_plot.plot_dat('three_bars')
+
+# Plotting the histogram analyses
     
+for test_name, results in plottable_histogram.items():
+    for results_index, variables_tuple in enumerate(results):
+        model = models[results_index]
+        hist_plots = MyBloodyPlots(output_folder='final_plots', font_folder=current_font_folder, x_variables=[], y_variables=variables_tuple, x_axis='Median rank', y_axis='Frequency (N=59)', labels=['Common nouns', 'Proper names'], title='{} model - Histogram of the median ranks for the {} test'.format(model, test_name.capitalize()), identifier='{}_{}'.format(test_name.lower(), model.lower()), colors=[teal, golden], y_invert=False, y_ticks=True, x_ticks=True)
+        hist_plots.plot_dat('histogram_two_sets')
+
 
 import pdb; pdb.set_trace()
 
