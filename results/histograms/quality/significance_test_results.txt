@@ -1,0 +1,54 @@
+Count model
+
+	Common nouns - median: 3.0
+	Proper names - median: 2.0
+
+P-value: 0.0006081171804676563
+Effect size: 0.44628341822962975
+
+
+W2v model
+
+	Common nouns - median: 5.0
+	Proper names - median: 5.0
+
+P-value: 0.6348105381838516
+Effect size: 0.061835428540158076
+
+
+N2v model
+
+	Common nouns - median: 4.5
+	Proper names - median: 4.0
+
+P-value: 0.8386245611099497
+Effect size: 0.026513380917829805
+
+
+Elmo model
+
+	Common nouns - median: 2.0
+	Proper names - median: 3.5
+
+P-value: 3.6367790996097367e-07
+Effect size: 0.6622773685095897
+
+
+Bert base model
+
+	Common nouns - median: 1.0
+	Proper names - median: 3.0
+
+P-value: 8.527729462473354e-09
+Effect size: 0.7495862235139604
+
+
+Bert large model
+
+	Common nouns - median: 2.5
+	Proper names - median: 3.5
+
+P-value: 4.384443985358883e-06
+Effect size: 0.5978630147599064
+
+

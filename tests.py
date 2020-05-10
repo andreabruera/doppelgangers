@@ -17,6 +17,8 @@ import logging
 import dill
 import matplotlib._color_data as mcd
 import tqdm
+import matplotlib.cm as cm
+import itertools
 
 from data.mybloodyplots.mybloodyplots import MyBloodyPlots
 from tqdm import tqdm
@@ -25,18 +27,93 @@ from matplotlib import font_manager as font_manager
 from collections import defaultdict
 from scipy import stats
 from scipy.stats.morestats import wilcoxon
-#from morestats import wilcoxon
 from re import sub
-#from nonce2vec.utils.novels_utilities import *
-#from nonce2vec.utils.count_based_models_utils import cosine_similarity, normalise
 from numpy import dot,sqrt,sum,linalg
 from math import sqrt
 from torch import Tensor
 from collections import defaultdict
-
+from sklearn.manifold import TSNE
 from sklearn.preprocessing import normalize as normalise
-
 from numpy.linalg import norm
+
+# Some functions for the tSNE visualization
+
+def tsne_plot_words(title, words, embeddings, colors, filename=None):
+    pyplot.figure(figsize=(16, 9))
+    for embedding, word in zip(embeddings, words):
+        #x = embeddings[:, 0]
+        #y = embeddings[:, 1]
+        #import pdb; pdb.set_trace()
+        pyplot.scatter(embedding[0], embedding[1], c=(colors[word].reshape(1, colors[word].shape[0])), alpha=1, edgecolors='k', s=120)
+        pyplot.annotate(word, alpha=1, xy=(embedding[0], embedding[1]), xytext=(10, 7), textcoords='offset points', ha='center', va='bottom', size=12)
+    #pyplot.legend(loc=4)
+    #pyplot.title(title, fontdict={'fontsize': 24, 'fontweight' : 'bold', 'color' : rcParams['axes.titlecolor'], 'verticalalignment': 'baseline', 'horizontalalignment': 'center'}, pad=10.0)
+    pyplot.title(title, fontsize='xx-large', fontweight='bold', pad = 15.0)
+    #pyplot.grid(True)
+    if filename:
+        pyplot.savefig(filename, format='png', dpi=300, bbox_inches='tight')
+
+def cleanup(version, dictionary, mode='doppelganger'):
+    name_selection = []
+    second_label = 'b' if mode == 'doppelganger' else 'wiki'
+    for name, vector in dictionary.items():
+        if re.sub('_a$', '_{}'.format(second_label), name) in dictionary.keys() and re.sub('_{}$'.format(second_label), '_a', name) in dictionary.keys():
+            if name not in name_selection:
+                name_selection.append(name)
+    cleaned_up = {name : dictionary[name] for name in name_selection} 
+    return cleaned_up
+
+def merge_two_dicts(version, dict_doppelganger, dict_one):
+    z = dict_doppelganger.copy()
+    z_clean = {k : v for k, v in z.items() if k[-1] == 'a'}
+    z_clean.update(dict_one)
+        
+    return z_clean
+
+def prepare_damn_numpy_arrays(dictionary):
+    new_dict = defaultdict(numpy.ndarray)
+    for k, v in dictionary.items():
+        if (v.shape)[0] == 1:
+            new_dict[k] = v.reshape(v.shape[1])
+        else:
+            new_dict[k] = v
+    return(new_dict)
+
+
+def get_colors_dict(test, proper_names, common_nouns):
+    #colors_gen = cm.prism(numpy.linspace(0, 1, (len(names)*2)))
+    color_dict = defaultdict(numpy.ndarray)
+    collection = {'proper' : [k for k, v in proper_names.items()], 'common' : [k for k, v in common_nouns.items()]}
+    for category, content in collection.items():
+        if category == 'proper': 
+            colors_gen = cm.Wistia(numpy.linspace(0, 1, (len(proper_names.keys()))))
+        if category == 'common':
+            colors_gen = cm.winter(numpy.linspace(1, 0, (len(common_nouns.keys()))))
+        c = 0
+        for name in content:
+            if test == 'doppelganger':
+                label = 'b'
+            if test == 'quality':
+                label = 'wiki'
+            na = re.sub('_a$|_b$|_wiki$', '', name)
+            if '{}_a'.format(na) not in color_dict.keys() and '{}_{}'.format(na, label) not in color_dict.keys():
+                #print(n)
+                c += 1
+                color_dict['{}_a'.format(na)] = colors_gen[c]
+                color_dict['{}_{}'.format(na, label)] = colors_gen[c]
+    return color_dict
+
+# The main RSA calculation function
+
+def calculate_pairwise_comparisons(vectors):
+    cosines = []
+    for first_name, first_vector in vectors.items():
+        for second_name, second_vector in vectors.items():
+            if first_name != second_name:
+                cosines.append(cosine_similarity(normalise(first_vector), normalise(second_vector)))
+    return cosines
+
+# Some general utilities
 
 def normalise(vector):
     norm_vector = norm(vector)
@@ -62,6 +139,8 @@ def wilcoxon_results(x,y):
     z, p_value = wilcoxon(x,y)
     effect_size = abs(z/math.sqrt(length))
     return p_value, effect_size
+
+# The main evaluation function
 
 def evaluation(entity_vectors, folder, entities_limit = 1000):
 
@@ -108,27 +187,36 @@ def evaluation(entity_vectors, folder, entities_limit = 1000):
             import pdb; pdb.set_trace()
         pass
     else:
-        logging.info('Not enough evaluations for {}!\nCheck the number of characters or common nouns for the current novel'.format(folder))
+        #logging.info('Not enough evaluations for {}!\nCheck the number of characters or common nouns for the current novel'.format(folder))
+        pass
 
     return ranks
 
+# Start of the evaluation script
 
 parser=argparse.ArgumentParser()
-parser.add_argument('--pickles_folder', required=True, type = str, help = 'Specify the name of the folder where the pickles are contained')
-parser.add_argument('--count_model_folder', required=True, type = str, help = 'Specify the name of the folder where the count vectors are stored')
-parser.add_argument('--make_plots', required=False, action='store_true', help = 'Indicates whether to plot the results or not')
-parser.add_argument('--write_to_file', required=False, action='store_true', help = 'Indicates whether to write to file or not')
+parser.add_argument('--data_folder', required=True, type = str, help = 'Specify the absolute path of the data folder where the folders containing the pickles for the POS and the main analyses are contained')
 args = parser.parse_args()
 
 # Petty stuff setup
 
 numpy.seterr(all='raise')
 logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
+labels = ['Common nouns', 'Proper names']
+golden = mcd.CSS4_COLORS['goldenrod']
+teal = mcd.CSS4_COLORS['steelblue']
+colors = [teal, golden]
+current_font_folder = '/import/cogsci/andrea/fonts'
+main_folder = 'results/main_results'
+os.makedirs(main_folder, exist_ok=True)
 
 # Setting up the evaluation
 
 cwd = os.getcwd()
-folders = os.listdir(args.pickles_folder)
+
+main_analyses_folder = os.path.join(args.data_folder, 'main_pickles')
+count_model_folder = os.path.join(args.data_folder, 'count_models')
+folders = os.listdir(main_analyses_folder)
 
 final_results = defaultdict(dict)
 histogram_results = defaultdict(dict)
@@ -144,7 +232,7 @@ if 'bert_base_training' in folders and 'bert_large_training'in folders and 'elmo
 for folder in tqdm(folders):
 
     model = re.sub('_training', '', folder)
-    big_folder = os.path.join(args.pickles_folder, folder)
+    big_folder = os.path.join(main_analyses_folder, folder)
     all_results = defaultdict(dict)
     logging.info('Current model: {}'.format(model))
 
@@ -152,7 +240,7 @@ for folder in tqdm(folders):
     doppelganger_entities_limit = defaultdict(int)
     quality_entities_limit = defaultdict(int)
     if 'count' in folder:
-        with open(os.path.join(args.count_model_folder, 'count_wiki_2/count_wiki_2_cooccurrences.pickle'), 'rb') as word_cooccurrences_file:
+        with open(os.path.join(count_model_folder, 'count_wiki_2/count_wiki_2_cooccurrences.pickle'), 'rb') as word_cooccurrences_file:
             background_vectors_length = max(dill.load(word_cooccurrences_file).keys())
             #logging.info(background_vectors_length)
 
@@ -166,7 +254,6 @@ for folder in tqdm(folders):
 
     for setup in setups:
         
-
         training = setup[0]
         test = setup[1]
         setup_key = '{}_{}'.format(test, training)
@@ -242,6 +329,11 @@ for folder in tqdm(folders):
         results = all_results[setup_key]
         across_novels_results = defaultdict(list)
 
+        test_short = re.sub('_test', '', test)
+        os.makedirs(os.path.join(main_folder, test_short), exist_ok=True)
+        with open(os.path.join(main_folder, test_short, '{}_details.txt'.format(re.sub('_training', '', folder))), 'a') as o:
+            o.write('{} test\n\n'.format(test_short.capitalize()))
+
         # Averaging the results within the novels
 
         for novel, results_list in results.items():
@@ -256,10 +348,9 @@ for folder in tqdm(folders):
 
             # Writing them down to file
 
-            if args.write_to_file:
-                output_file = '{}/{}/{}/{}/final_results.txt'.format(folder, novel, training, test)
-                with open(output_file, 'w') as o:
-                    o.write('Test: {}\nResults for: {}\nModel used: {}\n\nWithin-novel median: {}\nWithin-novel average: {}\nWithin-novel MRR: {}\nWithin-novel standard deviation of the scores: {}\nAmount of entities considered: {}'.format(re.sub('_', ' ', test), novel, re.sub('_', ' ', training), novel_median, novel_average, novel_mrr, novel_std, amount_of_entities))
+            output_file = os.path.join(main_analyses_folder, folder, novel, training, test, 'final_results.txt')
+            with open(output_file, 'w') as o:
+                o.write('Test: {}\nResults for: {}\nModel used: {}\n\nWithin-novel median: {}\nWithin-novel average: {}\nWithin-novel MRR: {}\nWithin-novel standard deviation of the scores: {}\nAmount of entities considered: {}'.format(re.sub('_', ' ', test), novel, re.sub('_', ' ', training), novel_median, novel_average, novel_mrr, novel_std, amount_of_entities))
 
         # Averaging results across the novels
 
@@ -295,55 +386,26 @@ for folder in tqdm(folders):
 
         # Writing down the results
 
-        if args.write_to_file:
-            across_path = 'results_per_model/{}/{}'.format(folder, test)
-            number_of_novels_used = len(across_novels_results.keys())
-            os.makedirs(across_path, exist_ok = True)
-            with open('{}/details_per_training.txt'.format(across_path), 'a') as o:
-                o.write('\nTest: {}\nLinguistic category considered: {}\n\nAcross-novels median of the medians: {}\nAcross-novels average of the averages: {}\nAcross-novels average of the MRRs: {}\nAcross-novels average standard deviation of the scores: {}\nAcross-novels median of the amount of entities considered: {}\nNumber of novels used: {}\n\nCorrelation with number of characters: {}\nCorrelation with the length of the novels: {}\nCorrelation with the standard deviation of the character\'s frequencies: {}\n'.format(re.sub('_', ' ', test), re.sub('_', ' ', training), across_median, across_average, across_average_mrr, across_average_std, across_entities, number_of_novels_used, number_of_characters_correlation, novel_length_correlation, std_of_characters_correlation))
+        with open(os.path.join(main_folder, test_short, '{}_details.txt'.format(re.sub('_training', '', folder))), 'a') as o:
+            o.write('Linguistic category considered: {}\n\nAcross-novels median of the medians: {}\nAcross-novels average of the averages: {}\nAcross-novels average of the MRRs: {}\nAcross-novels average standard deviation of the scores: {}\nAcross-novels median of the amount of entities considered: {}\nNumber of novels used: {}\n\nCorrelation with number of characters: {}\nCorrelation with the length of the novels: {}\nCorrelation with the standard deviation of the character\'s frequencies: {}\n'.format(re.sub('_', ' ', training).capitalize(), across_median, across_average, across_average_mrr, across_average_std, across_entities, number_of_novels_used, number_of_characters_correlation, novel_length_correlation, std_of_characters_correlation))
 
         # Printing the results
 
-        logging.info('\nTest: {}\nLinguistic category considered: {}\n\nAcross-novels median of the medians: {}\nAcross-novels average of the averages: {}\nAcross-novels average of the MRRs: {}\nAcross-novels average standard deviation of the scores: {}\nAcross-novels median of the amount of entities considered: {}\nNumber of novels used: {}\n\nCorrelation with number of characters: {}\nCorrelation with the length of the novels: {}\nCorrelation with the standard deviation of the character\'s frequencies: {}\n'.format(re.sub('_', ' ', test), re.sub('_', ' ', training), across_median, across_average, across_average_mrr, across_average_std, across_entities, number_of_novels_used, number_of_characters_correlation, novel_length_correlation, std_of_characters_correlation))
+        #logging.info('\nTest: {}\nLinguistic category considered: {}\n\nAcross-novels median of the medians: {}\nAcross-novels average of the averages: {}\nAcross-novels average of the MRRs: {}\nAcross-novels average standard deviation of the scores: {}\nAcross-novels median of the amount of entities considered: {}\nNumber of novels used: {}\n\nCorrelation with number of characters: {}\nCorrelation with the length of the novels: {}\nCorrelation with the standard deviation of the character\'s frequencies: {}\n'.format(re.sub('_', ' ', test), re.sub('_', ' ', training), across_median, across_average, across_average_mrr, across_average_std, across_entities, number_of_novels_used, number_of_characters_correlation, novel_length_correlation, std_of_characters_correlation))
 
     final_results[model] = model_results
     histogram_results[model] = model_histogram
    
-    '''
-
-    # Comparing the statistical significance across different conditions
-
-    significance_results = []
-    try:
-        significance_results.append([lsts[0][0], lsts[1][0], wilcoxon_results(list_one, list_two), numpy.median(list_one), numpy.median(list_two)])
-    except ValueError:
-        significance_results.append([lsts[0][0], lsts[1][0], ('Na', 'Na'), numpy.median(list_one), numpy.median(list_two)])
-    try:
-        significance_results.append([lsts[1][0], lsts[2][0], wilcoxon_results(list_two, list_three), numpy.median(list_two), numpy.median(list_three)])
-    except ValueError:
-        significance_results.append([lsts[1][0], lsts[2][0], ('Na', 'Na'), numpy.median(list_two), numpy.median(list_three)])
-    try:
-        significance_results.append([lsts[0][0], lsts[2][0], wilcoxon_results(list_one, list_three), numpy.median(list_one), numpy.median(list_three)])
-    except ValueError:
-        significance_results.append([lsts[0][0], lsts[2][0], ('Na', 'Na'), numpy.median(list_one), numpy.median(list_three)])
-    #with open('{}/significance_test_results.txt'.format(path), 'a') as o:
-    with open('{}/significance_test_results.txt'.format(path), 'a') as o:
-        for s in significance_results:
-            o.write('Comparison between:\n\n\t{} - median: {}\n\t{} - median: {}\n\nP-value: {}\nEffect size: {}\n\n\n'.format(s[0], s[3], s[1], s[4], s[2][0], s[2][1]))
-    '''
 
 # Reorganizing the data for plotting out the final results
 
 # A reminder: model_results[setup_key] = {'average_rank' : across_average, 'median_rank' : across_median, 'average_mrr' : across_average_mrr, 'median_mrr' : across_median_mrr, 'corr_num_characters' : number_of_characters_correlation, 'corr_novel_length' : novel_length_correlation, 'corr_std_characters_mentions' : std_of_characters_correlation}
+
 plottable_results = defaultdict(list)
 novel_length = []
 number_of_characters = []
 std_of_character_mentions = []
-golden = mcd.CSS4_COLORS['goldenrod']
-teal = mcd.CSS4_COLORS['steelblue']
-current_font_folder = '/import/cogsci/andrea/fonts'
 models = [(re.sub('_', ' ', m)).capitalize() for m in final_results.keys()]
-os.makedirs('plots', exist_ok=True)
 
 # Data for the main results and the correlational analyses
 
@@ -365,412 +427,303 @@ for model_name, setup_keys in histogram_results.items():
 
 # Creating the folders for the plots
 
-main_folder = 'plots/main_results'
-corr_folder = 'plots/correlations'
-hist_folder = 'plots/histograms'
-os.makedirs(main_folder, exist_ok=True)
+corr_folder = 'results/correlations'
+hist_folder = 'results/histograms'
 os.makedirs(corr_folder, exist_ok=True)
 os.makedirs(hist_folder, exist_ok=True)
 
 # Plotting the main results
+logging.info('Plotting the main results and the correlational analyses...')
 
 for test, results in plottable_results.items():
-    results_plots = MyBloodyPlots(output_folder=main_folder, font_folder=current_font_folder, x_variables=models, y_variables=results, x_axis='', y_axis='Median rank', labels=['Common nouns', 'Proper names'], title='Median ranking results for the {} test'.format(test.capitalize()), identifier=test, colors=[teal, golden], y_invert=True, x_ticks=True)
+    results_plots = MyBloodyPlots(output_folder=os.path.join(main_folder, test), font_folder=current_font_folder, x_variables=models, y_variables=results, x_axis='', y_axis='Median rank', labels=['Common nouns', 'Proper names'], title='Median ranking results for the {} test'.format(test.capitalize()), identifier=test, colors=[teal, golden], y_invert=True, x_ticks=True, y_ticks=True, y_grid=True)
     results_plots.plot_dat('two_lines')
 
-# Plotting the correlational analyses
+    # Plotting the correlational analyses
 
-    corr_plot = MyBloodyPlots(output_folder=corr_folder, font_folder=current_font_folder, x_variables=models, y_variables=[novel_length, number_of_characters, std_of_character_mentions], x_axis='', y_axis='Spearman correlation', labels=['Novel length', 'Number of characters', 'Std of character mentions'], title='Correlational analysis for the results on proper names'.format(test.capitalize()), identifier='correlations', colors=['darkorange', 'orchid', 'darkgrey'], x_ticks=True)
+    y_ticks = [round(k*.1, 1) for k in range(0, 11)]
+    corr_plot = MyBloodyPlots(output_folder=corr_folder, font_folder=current_font_folder, x_variables=models, y_variables=[novel_length, number_of_characters, std_of_character_mentions], x_axis='', y_axis='Spearman correlation', labels=['Novel length', 'Number of characters', 'Std of character mentions'], title='Correlational analysis for the results on proper names', identifier='correlations', colors=['darkorange', 'orchid', 'darkgrey'], x_ticks=True, y_ticks=True, y_lim=(0.0, 1.0), y_grid=True)
     corr_plot.plot_dat('three_bars')
 
 # Plotting the histogram analyses
+
+logging.info('Plotting the histograms...')
     
 for test_name, results in plottable_histogram.items():
+    hist_folder_per_test = os.path.join(hist_folder, test_name)
+    os.makedirs(hist_folder_per_test, exist_ok=True)
     for results_index, variables_tuple in enumerate(results):
         model = models[results_index]
-        hist_plots = MyBloodyPlots(output_folder=hist_folder, font_folder=current_font_folder, x_variables=[], y_variables=variables_tuple, x_axis='Median rank', y_axis='Frequency (N=59)', labels=['Common nouns', 'Proper names'], title='{} model - Histogram of the median ranks for the {} test'.format(model, test_name.capitalize()), identifier='{}_{}'.format(test_name.lower(), model.lower()), colors=[teal, golden], y_invert=False, y_ticks=True, x_ticks=True)
+        hist_plots = MyBloodyPlots(output_folder=hist_folder_per_test, font_folder=current_font_folder, x_variables=[], y_variables=variables_tuple, x_axis='Median rank', y_axis='Frequency (N=59)', labels=['Common nouns', 'Proper names'], title='{} model - Histogram of the median ranks for the {} test'.format(model, test_name.capitalize()), identifier='{}_{}'.format(test_name.lower(), re.sub('\s', '_', model).lower()), colors=[teal, golden], y_invert=False, y_ticks=True, x_ticks=True, y_grid=True)
         hist_plots.plot_dat('histogram_two_sets')
 
+        # Comparing the statistical significance across different conditions
 
-import pdb; pdb.set_trace()
+        significance_results = []
+        try:
+            significance_results.append([wilcoxon_results(variables_tuple[0], variables_tuple[1]), numpy.median(variables_tuple[0]), numpy.median(variables_tuple[1])])
+        except ValueError:
+            significance_results.append([(numpy.nan, numpy.nan), numpy.median(variables_tuple[0]), numpy.median(variables_tuple[1])])
+        with open(os.path.join(hist_folder_per_test, 'significance_test_results.txt'), 'a') as o:
+            for s in significance_results:
+                o.write('{} model\n\n\tCommon nouns - median: {}\n\tProper names - median: {}\n\nP-value: {}\nEffect size: {}\n\n\n'.format(re.sub('_', ' ', model).capitalize(), s[1], s[2], s[0][0], s[0][1]))
 
-'''        
-        plot_median[novel_name]=[]
-        plot_mrr[novel_name]=[]
-        lengths[novel_name]=[]
-        names[novel_name]=[]
-        characters_dict[novel_name]=[]
-        characters_std[novel_name]=[]
+# Plotting the POS analysis
 
-        ambiguities={}
-        ambiguities_present=False
-        marker=False
-        
-        sentences_counter=[]
-        ambiguities_counter=[]
-        characters_frequency=[]
-        base_novel = novel
-        base_folder=os.listdir('{}/{}'.format(big, base_novel))
-        novel_folder=os.listdir('{}/{}'.format(big, novel))
-        for single_file_or_folder in novel_folder:
-            if '{}'.format(test) in single_file_or_folder:
-                test_folder = os.listdir('{}/{}/{}'.format(big, novel, single_file_or_folder))
-            #if 'evaluation' in single_file and '{}'.format(test) in single_file:
-            #if 'evaluation' in single_file and 'quality' not in single_file:
-                for f in test_folder:
-                    if 'evaluation' in f:
-                        evaluation=open('{}/{}/{}/{}'.format(big, novel, single_file_or_folder, f)).readlines()
-                        if 'common' in big:
-                            equivalent_folder = re.sub('common_matched_|common_unmatched', '', big)
-                            proper_file = open('{}/{}/{}/{}'.format(equivalent_folder, novel, single_file_or_folder, f)).readlines()
-                            proper_list = [l.strip() for l in proper_file]
-                            relevant_line = proper_list[3]
-                            relevant_number = int(relevant_line.split('\t')[1])
-        
-                        marker=False
-                        if len(evaluation)>1:
-                            marker=True
-                        if marker==True:
-                            line1=evaluation[0].strip('\n').split('\t')[1]
-                            line2=evaluation[1].strip('\n').split('\t')[1]
-                            line3=evaluation[2].strip('\n').split('\t')[1]
-                            line4=evaluation[3].strip('\n').split('\t')[1]
-                            #mrr+=float(line1)
-                            #median+=float(line2)
-                            list_var_mrr.append(float(line1))
-                            list_var_median.append(float(line2))
-                            list_var_mean.append(float(line3))
-                            plot_median[novel_name] = float(line2)
-                            plot_mrr[novel_name].append(float(line1))
-                            #characters+=int(line3)
-                            characters.append(int(line4))
-            
-        if marker==True:
-            for single_file in base_folder:
-                if 'character' in single_file and 'ender' not in single_file:
-                    characters_file=open('{}/{}/{}'.format(big, base_novel, single_file)).readlines()
-                    for l in characters_file:
-                        l=l.split('\t') 
-                        l=int(l[0])
-                        if l>=10:
-                            characters_frequency.append(l)
-                if 'data_output' in single_file:
-                    data_output_filenames=os.listdir('{}/{}/data_output'.format(big, base_novel))
-                    if 'ambiguities' in data_output_filenames:
-                        ambiguities_present=True
-                        ambiguities_filenames=os.listdir('{}/{}/data_output/ambiguities'.format(big, base_novel))
-                        for ambiguity in ambiguities_filenames:
-                            current_ambiguity=open('{}/{}/{}/data_output/ambiguities/{}'.format(big, base_novel, ambiguity)).readlines()
-                            for character_line in current_ambiguity:
-                                if 'too: ' in character_line:
-                                    character_line=character_line.strip('\n').split('too: ')[1]
-                                    character_ambiguity=character_line.split(' out of ')[0]
-                                    sent=character_line.split(' out of ')[1].strip('\n').replace(' sentences', '')
-                                    ambiguities_counter.append(int(character_ambiguity))
-                                    sentences_counter.append(int(sent))
-                if numpy.sum(sentences_counter)==0:
-                    ambiguities_present=False
-            if ambiguities_present==True:
-                novel_ambiguity=numpy.sum(ambiguities_counter)
-                total_sentences=numpy.sum(sentences_counter)
-                percentage=round((float(novel_ambiguity)*100.0)/float(total_sentences), 2)
-                ambiguities[novel_name]=[novel_ambiguity, total_sentences, percentage]   
+logging.info('Plotting the POS analysis plots...')
 
-            original_file = [k for k in  os.listdir('{}/{}/novel'.format(big, base_novel)) if 'replication' in k][0] 
-            open_file=open('{}/{}/novel/{}'.format(big, base_novel, original_file)).read()
-            open_file=sub(r'\W+', ' ', open_file)
-            open_file=open_file.split(' ')
-            novel_length=len(open_file)
-            if type(novel_length) != list:
-                lengths[novel_name]=novel_length
-            else:
-                print(novel_name)
-            names[novel_name].append(novel)
-            characters_dict[novel_name] = int(line4)
-            #print(novel_name)
-            #print(len(characters_frequency))
-            std_characters_frequency=numpy.std(characters_frequency)
-            characters_std[novel_name].append(std_characters_frequency)
-        if marker==False:
-            print(novel_name)
+# Preparing some utilities
+
+all_results = defaultdict(dict)
+pos_list = ['ADJ', 'ADV', 'CCONJ', 'DET', 'NOUN', 'PRON', 'PROPN', 'VERB']
+window_sizes = ['2', '5', '7', '10']
+length = [k for k in range(len(pos_list))]
+pos_folder = os.path.join(args.data_folder, 'pos_pickles')
+output_pos_folder = 'results/pos'
+os.makedirs(output_pos_folder, exist_ok=True)
+setups = [(tr, te) for tr in training_types for te in tests]
+
+per_novel_results = defaultdict(dict)
+
+# Collecting the evaluations for each setup
+
+for setup_key in setups:
+    
+    #logging.info('Currently evaluating performance on setup: {}'.format(setup_key))
+
+    training = setup_key[0]
+    test = setup_key[1]
+    #setup_key = '{}_{}'.format(test, training)
+    
+    current_results = defaultdict(list)
+    aggregated_results = defaultdict(list)
+
+    # Collecting the results for each novel
+
+    for novel in os.listdir(pos_folder):
+        current_novel = defaultdict(list)
+        novel_folder = os.path.join(pos_folder, novel)
+        novel_number = re.sub('_no_header.txt', '', [filename for filename in os.listdir('{}/novel'.format(novel_folder)) if 'no_header' in filename][0])
+
+        test_folder = os.path.join(novel_folder, training, test)
+        try:
+            current_pickle = pickle.load(open('{}.pickle'.format(os.path.join(test_folder, novel_number)), 'rb'))
+            for k, v in current_pickle.items():
+                window_size = re.sub('\D', '', k)
+                current_results[window_size].append(v)
+                current_novel[window_size].append(v)
+            for w in window_sizes:
+                aggregated_results[w].append([numpy.median([v[i] for v in current_novel[w]]) for i in range(len(pos_list))])
+        except FileNotFoundError:
+            #logging.info('Could not find the file for {}...'.format(novel))
             pass
-        #import pdb; pdb.set_trace()
-    average_mrr=numpy.median(list_var_mrr)
-    var_mrr=numpy.var(list_var_mrr)
-    average_median=numpy.median(list_var_median)
-    var_median=numpy.var(list_var_median)
-    average_mean=numpy.median(list_var_mean)
-    var_mean=numpy.var(list_var_mean)
-    average_characters=int(round(numpy.mean(characters)))
-    with open('pickles_for_significance_testing/{}/{}_test_{}.pickle'.format(test, test, args.training_mode), 'wb') as o:
-        pickle.dump(list_var_median, o)
+    all_results[setup_key] = current_results
+    per_novel_results[setup_key] = aggregated_results
 
-    if 'common' not in args.training_mode:
-        if average_characters>1.0:
-            setup_medians = [v for k, v in plot_median.items() if v != []]
-            #print(setup_medians)
-            setup_lengths = [v for k,v in lengths.items() if v != []]
-            #print(setup_lengths)
-            setup_chars = [v for k,v in characters_dict.items() if v != []]
-            #print(setup_chars)
-            setup_std = [v for k,v in characters_std.items() if v != []]
-            #print(setup_std)
-            spearman_lengths=round(scipy.stats.spearmanr(setup_lengths, setup_medians)[0],2) 
-            spearman_chars=round(scipy.stats.spearmanr(setup_chars, setup_medians)[0],2)
-            spearman_std = round(scipy.stats.spearmanr(setup_std, setup_medians)[0],2)
-            print('\nSetup: {}\n\nMedian MRR: {}\nMRR Variance: {}\nMedian Median: {}\nVariance in median median: {}\nMedian of means: {}\nMedian of means variance: {}\nAverage number of characters: {}\nTotal of rankings taken into account: {}\nCorrelation with length: {}\nCorrelation with number of characters: {}\nCorrelation with standard deviation of characters frequency: {}\n'.format(setup_shorthand, average_mrr, var_mrr, average_median, var_median, average_mean, var_mean, average_characters, len(list_var_mrr), spearman_lengths, spearman_chars, spearman_std))
+# Collecting the median results for plotting
 
+median_results = defaultdict(dict)
+full_results = defaultdict(dict)
+for key, dictionary in all_results.items():
+    test_median_results = defaultdict(list)
+    test_full_results = defaultdict(list)
+    
+    for window_size, vectors in dictionary.items():
+        test_median_results[window_size] = [[numpy.nanmedian([v[i] for v in vectors]), numpy.nanstd([v[i] for v in vectors])] for i in range(len(pos_list))]
+        test_full_results[window_size] = [[v[i] for v in vectors] for i in range(len(pos_list))]
+    median_results[key] = test_median_results
+    full_results[key] = test_full_results
+
+# Actually plotting
+test = 'doppelganger_test'
+
+# Making one plot per window size, only for the novels data
+for window_size in window_sizes:
+
+    #pos_list = ['ADJ', 'ADV', 'CCONJ', 'DET', 'NOUN', 'PRON', 'PROPN', 'VERB']
+    common_data = [k for i, k in enumerate(median_results[('common_nouns_unmatched', test)][window_size]) if i != 2 and i != 6] 
+    proper_data = [k for i, k in enumerate(median_results[('proper_names_matched', test)][window_size]) if i != 2 and i != 6]
+    x_variables = [k for i, k in enumerate(pos_list) if i != 2 and i != 6]
+
+    errorbar_plots = MyBloodyPlots(output_folder=output_pos_folder, font_folder='/import/cogsci/andrea/fonts', x_variables=x_variables, y_variables=[common_data, proper_data], x_axis='', y_axis='Median normalized frequency', labels=labels, colors=colors, identifier='window_{}'.format(window_size), title='Window {} - POS analysis for the {}'.format(window_size, re.sub('_', ' ', test).capitalize()), y_ticks=True, y_lim=(0.0, 1.0), y_grid=True)
+    errorbar_plots.plot_dat(plot_type='errorbar_two_sets')
+
+    # Now calculating the statistical significance of the differences among POS, only for the novels
+
+    common_data = [k for i, k in enumerate(full_results[('common_nouns_unmatched', test)][window_size]) if i != 2 and i != 6] 
+    proper_data = [k for i, k in enumerate(full_results[('proper_names_matched', test)][window_size]) if i != 2 and i != 6]
+    x_variables = [k for i, k in enumerate(pos_list) if i != 2 and i != 6]
+    for pos_index, pos in enumerate(x_variables):
+        p, e = wilcoxon_results(proper_data[pos_index], common_data[pos_index])
+        with open(os.path.join(output_pos_folder, 'window_{}_significance_results.txt'.format(window_size)), 'a') as o:
+            o.write('Significance results for {}:\n\nP-value:\t{}\nEffect size\t{}\n\nMedian for proper names:\t{}\nMedian for common nouns:\t{}\n\n\n'.format(pos, p, e, numpy.nanmedian(proper_data[pos_index]), numpy.nanmedian(common_data[pos_index])))
+
+# Plotting the tSNE plots for A Study in Scarlet
+
+logging.info('Plotting the tSNE plots...')
+
+tests = ['quality', 'doppelganger']
+versions = ['bert_base', 'bert_large', 'elmo', 'n2v', 'w2v', 'count']
+combinations = []
+tSNE_output_folder = 'results/tSNE'
+os.makedirs(tSNE_output_folder, exist_ok=True)
+
+for t in tests:
+    for v in versions:
+        if (t, v) not in combinations:
+            combinations.append((t, v))
+
+for combination in combinations:
+
+    test = combination[0]
+    version = combination[1]
+
+    os.makedirs(os.path.join(tSNE_output_folder, test), exist_ok=True)
+    #v = pickle.load(open('elmo_novels/A_Study_in_Scarlet_by_Arthur_Conan_Doyle/244.pickle', 'rb'))
+    pickle_proper = prepare_damn_numpy_arrays(pickle.load(open(os.path.join(main_analyses_folder, '{}_training/A_Study_in_Scarlet_by_Arthur_Conan_Doyle/proper_names_matched/{}_test/244.pickle'.format(version, test)), 'rb')))
+
+    pickle_common = prepare_damn_numpy_arrays(pickle.load(open(os.path.join(main_analyses_folder, '{}_training/A_Study_in_Scarlet_by_Arthur_Conan_Doyle/common_nouns_unmatched/{}_test/244.pickle'.format(version, test)), 'rb')))
+
+    v_proper = cleanup(version, pickle_proper)
+    v_common = cleanup(version, pickle_common)
+    
+    
+    if test == 'quality':
+        
+        v_proper_prepared = prepare_damn_numpy_arrays(pickle.load(open(os.path.join(main_analyses_folder, '{}_training/A_Study_in_Scarlet_by_Arthur_Conan_Doyle/proper_names_matched/doppelganger_test/244.pickle'.format(version)), 'rb')))
+        v_proper_merged = merge_two_dicts(version, v_proper_prepared, v_proper)
+        v_common_prepared = prepare_damn_numpy_arrays(pickle.load(open(os.path.join(main_analyses_folder, '{}_training/A_Study_in_Scarlet_by_Arthur_Conan_Doyle/common_nouns_unmatched/doppelganger_test/244.pickle'.format(version)), 'rb')))
+        v_common_merged = merge_two_dicts(version, v_common_prepared, v_common)
+        v_proper = cleanup(version, v_proper_merged, mode='wiki')
+        v_common = cleanup(version, v_common_merged, mode='wiki')
+    if version == 'count':
+        minimum_cutoff = min([v.shape[0] for k, v in v_proper.items()] + [v.shape[0] for k, v in v_common.items()])
+        proper_copy = v_proper.copy()
+        common_copy = v_common.copy()
+        v_proper = {k : v[:minimum_cutoff] for k, v in proper_copy.items()}
+        v_common = {k : v[:minimum_cutoff] for k, v in common_copy.items()}
+
+    if version == 'bert_large':
+        version = 'BERT_large'
+    if version == 'bert_base':
+        version = 'BERT_base'
+    if version == 'elmo':
+        version = 'ELMO'
+    if version == 'n2v':
+        version = 'Nonce2Vec'
+    if version == 'w2v':
+        version = 'Word2Vec'
+    if version == 'count':
+        version = 'Count'
+
+    
+    colors_dict = get_colors_dict(test, v_proper, v_common)
+
+    tsne_model_en_2d = TSNE(perplexity=15, n_components=2, init='pca', n_iter=3500, random_state=32)
+    embeddings_en_2d = tsne_model_en_2d.fit_transform([v for k, v in v_proper.items()] + [v for k, v in v_common.items()])
+    
+    tsne_plot_words('{} test - tSNE visualization of the {} vectors for A Study in Scarlet'.format(test.capitalize(), re.sub('_', ' ', version)), [k for k in v_proper.keys()] + [k for k in v_common.keys()], embeddings_en_2d, colors_dict, os.path.join(tSNE_output_folder, test, '{}_study_scarlet.png'.format(version)))
+
+# RSA analysis
+
+logging.info('Now carrying out the RSA analysis...')
+
+all_correlations = defaultdict(dict)
+rsa_plottable = defaultdict(dict)
+tests = ['doppelganger_test', 'quality_test']
+rsa_output_folder = 'results/RSA'
+os.makedirs(rsa_output_folder, exist_ok=True)
+
+for model in tqdm(folders):
+
+    model_name = re.sub('_training/', '', model)
+    model_folder = os.path.join(main_analyses_folder, model)
+    rsa_model_results = defaultdict(dict)
+
+    for t in tests:
+
+        correlations = defaultdict(list)        
+
+        for novel in os.listdir(model_folder):
+
+            current_folder = os.path.join(model_folder, novel)
+
+            for training_type in os.listdir(current_folder):
+
+                if 'matched' in training_type and '.txt' not in training_type and training_type != 'common_nouns_matched':
+
+                    training_folder = os.path.join(current_folder, training_type)
+
+                    for root, directory, files in os.walk(training_folder):
+
+                        for f in files:
+                            #if '' in f and '.pickle' in f:
+                            #elif 'wiki_' not in f and '.pickle' in f:
+                            if t in root and '.pickle' in f and 'doppel' in t:
+                                a_vectors = {k : v for k, v in (pickle.load(open('{}'.format(os.path.join(root, f)), 'rb'))).items() if k[len(k)-2:] == '_a'}
+                                b_vectors = {k : v for k, v in (pickle.load(open('{}'.format(os.path.join(root, f)), 'rb'))).items() if k[len(k)-2:] == '_b'}
+                            elif t in root and '.pickle' in f and 'qual' in t:
+                                wiki_path = '{}'.format(os.path.join(root, f))
+                                a_path = re.sub('quality', 'doppelganger', wiki_path)
+                                a_vectors = {k : v for k, v in (pickle.load(open(a_path, 'rb'))).items() if k[len(k)-2:] == '_a'}
+                                b_vectors = {re.sub('wiki', 'b', k) : v for k, v in (pickle.load(open('{}'.format(os.path.join(root, f)), 'rb'))).items() if k[len(k)-1] == 'i'}
+                    a_vectors_ready = {k : v for k, v in a_vectors.items() if re.sub('_a$', '_b', k) in b_vectors.keys()}
+                    b_vectors_ready = {k : v for k, v in b_vectors.items() if re.sub('_b$', '_a', k) in a_vectors.keys()}
+                    if 'count' in model:
+                        a_copy = a_vectors_ready.copy()
+                        a_vectors_ready = {k: v.reshape(v.shape[1]) for k, v in a_copy.items()}
+                        b_copy = b_vectors_ready.copy()
+                        b_vectors_ready = {k: v.reshape(v.shape[1]) for k, v in b_copy.items()}
+                    #if t == 'quality_test':
+                        #import pdb; pdb.set_trace()
+
+                    assert len(b_vectors_ready) == len(a_vectors_ready)
+
+                    cosines_b = calculate_pairwise_comparisons(b_vectors_ready)
+                    cosines_a = calculate_pairwise_comparisons(a_vectors_ready)
+
+                    if len(cosines_b) > 2:
+                        correlation = scipy.stats.spearmanr(cosines_b, cosines_a)
+                    else:
+                        correlation = [numpy.nan]
+                    #wilcoxon_results = wilcoxon(cosines_wiki, cosines_a)
+                    #print('Training type: {} - correlation: {}'.format(training_type, correlation[0]))
+                    #correlations.append(correlation[0])
+                    correlations[training_type].append(correlation[0])
+        all_correlations[t] = correlations
+
+    for test_name, correlations in all_correlations.items():
+        rsa_test_results = defaultdict(float)
+        test_short_name = re.sub('_test', '', test_name)
+        test_output_folder = os.path.join(rsa_output_folder, test_short_name)
+        os.makedirs(test_output_folder, exist_ok=True)
+        #with open(os.path.join(test_output_folder, 'RSA.txt'), 'a') as o:
+            #o.write('{} test\n\n'.format(test_short_name.capitalize()))
+
+        for training_type, training_correlations in correlations.items():
+            if training_type != 'common_nouns_matched':
+                category = re.sub('_', ' ', re.sub('_matched|_unmatched', '', training_type)).capitalize()
+                correlation_median = numpy.nanmedian(training_correlations)
+                correlation_std = numpy.nanstd(training_correlations)
+                #with open(os.path.join(test_output_folder, 'RSA_results.txt'.format(test_short_name)), 'a') as o:
+                    #o.write('Model: {}\t-\t{}\n\nAverage Spearman correlation: {}\nMedian Spearman correlation: {}\nStandard deviation of the RSA results: {}\n\n'.format(re.sub('_', ' ', model_name).capitalize(), category, numpy.nanmean(training_correlations), correlation_median, numpy.nanstd(training_correlations)))
+
+                rsa_test_results[category] = (correlation_median, correlation_std)
+        rsa_model_results[test_short_name] = rsa_test_results
+    rsa_plottable[model_name] = rsa_model_results
+
+for test in tests:
+    test_short_name = re.sub('_test', '', test)
+    test_output_folder = os.path.join(rsa_output_folder, test_short_name)
+    y_data = [(rsa_plottable[model_name][test_short_name]['Common nouns'][0], rsa_plottable[model_name][test_short_name]['Proper names'][0]) for model_name in folders]
+    y_err = [(rsa_plottable[model_name][test_short_name]['Common nouns'][1], rsa_plottable[model_name][test_short_name]['Proper names'][1]) for model_name in folders]
+
+    model_names = [re.sub('_training', '', model) for model in folders]
+    if test_short_name == 'doppelganger':
+        text_coords = (0, -15)
     else:
-        if average_characters>1.0:
-            setup_medians = [v for k, v in plot_median.items() if v != []]
-            #print(setup_medians)
-            print('\nSetup: {}\n\nMedian MRR: {}\nMRR Variance: {}\nMedian Median: {}\nVariance in median median: {}\nMedian of means: {}\nMedian of means variance: {}\nAverage number of characters: {}\nTotal of rankings taken into account: {}\n'.format(setup_shorthand, average_mrr, var_mrr, average_median, var_median, average_mean, var_mean, average_characters, len(list_var_mrr)))
+        text_coords = (0, 10)
+    RSA_results_plots = MyBloodyPlots(output_folder=test_output_folder, font_folder=current_font_folder, x_variables=[re.sub('_', ' ', model_name).capitalize() for model_name in model_names], y_variables=y_data, x_axis='', y_axis='Median Spearman correlation', labels=['Common nouns', 'Proper names'], title='Median RSA correlations across spaces for the {} test'.format(test_short_name.capitalize()), identifier='RSA_results', colors=[teal, golden], y_lim=(0.0,1.0), x_ticks=True, y_ticks=True, y_grid=True, text_coords=text_coords)
+    RSA_results_plots.plot_dat('two_lines')
 
-        if args.make_plots:
-            results_output=open('{}/doppel_results_{}.txt'.format(output_folder, novel),'w')
-            results_output.write('\nSetup: {}\n\nMedian MRR: {}\nMRR Variance: {}\nMedian Median: {}\nVariance in median median: {}\nMedian of means: {}\nMedian of means variance: {}\nAverage number of characters: {}\nTotal of rankings taken into account: {}\n'.format(setup_shorthand, average_mrr, var_mrr, average_median, var_median, average_mean, var_mean, average_characters, len(list_var_mrr)))
-        if ambiguities_present==True:
-            if len(ambiguities.keys())>0 and total_evaluations_runs_counter==0:
-                ambiguity_percentages=[]
-                for amb in ambiguities.keys():
-                    novel_amb=ambiguities[amb]
-                    amb_sent=novel_amb[0]
-                    total_sent=novel_amb[1]
-                    percent=novel_amb[2]
-                    ambiguity_percentages.append(percent)
-                final_percent=numpy.mean(ambiguity_percentages)
-                print('Percentage of ambiguous sentences of all sentences used for training (containing more than one character): {} %\n'.format(round(final_percent, 3)))
-
-                total_evaluations_runs_counter+=1
-'''
-if args.make_plots:
-
-    if 'bert' in args.training_mode:
-        output_folder='{}_layer_{}_doppelgaenger_test_plots'.format(args.training_mode, args.bert_layer)
-    else:
-        output_folder='{}_{}_test_plots'.format(args.training_mode, test)
-    os.makedirs(output_folder, exist_ok=True)
-
-    ### Ambiguity infos
-
-
-    with open('{}/doppel_ambiguities_info.txt'.format(output_folder), 'w') as ambiguity_file:
-        if len(ambiguities.keys())>0:
-            for amb in ambiguities.keys():
-                novel_amb=ambiguities[amb]
-                amb_sent=novel_amb[0]
-                total_sent=novel_amb[1]
-                perc_amb=novel_amb[2]
-                ambiguity_file.write('\nAmbiguous sentences: {} out of {}\nPercentage: {} %\n\n'.format(amb_sent, total_sent, perc_amb))
-
-    def ticks(setups_dict, mode):
-        max_value=[]
-        for i in setups_dict.keys():
-            max_i=max(setups_dict[i])
-            max_value.append(max_i) 
-        x_ticks=[u for u in range(1, len(setups_dict[i])+1)]
-        if mode=='median':
-            y_ticks=[i for i in range(1, int(max(max_value))+1, 2)] 
-        elif mode=='mrr':
-            y_ticks=[i for i in numpy.linspace(0, 1, 11)] 
-        return x_ticks, y_ticks
-
-    short_names=[]
-    for n in names[setup]:
-        n=n.replace('_', ' ').split(' by')
-        short_names.append(n[0])
-
-    sum_spearman='N.A.'
-
-    ### Novels data:
-
-    novels_info=open('{}/{}_novels_info.txt'.format(output_folder, setup_shorthand), 'w')
-    for n in [k for k in range(0, len(short_names))]:
-        novels_info.write('Name:\t{}\nLength in words:\t{}\nCharacters evaluated:\t{}\nMedian Rank:\t{}\nMRR:\t{}\nStandard deviation of characters frequency: {}\n\n'.format(short_names[n],lengths[setup][n],characters_dict[setup][n],list_var_median[n],list_var_mrr[n], characters_std[setup][n]))
-
-    sum_color=['lightslategrey', 'coral', 'darkgoldenrod', 'darkcyan', 'deeppink', 'lightgreen', 'aquamarine', 'green', 'purple', 'gold', 'sienna', 'olivedrab']
-
-    ### Lenghts/score
-
-    for setup in plot_median.keys():
-        if 'sum' in setup:
-            legend_label='Sum'
-            plt.scatter(plot_median[setup],lengths[setup], label=legend_label, color=sum_color, marker='P') 
-            sum_spearman='Sum: {}'.format(round(scipy.stats.spearmanr(plot_median[setup], lengths[setup])[0],2)) 
-        else:
-            legend_label='N2V'
-            plt.scatter(plot_median[setup],lengths[setup], label=legend_label, color=sum_color, marker='v') 
-            n2v_spearman='N2V: {}'.format(round(scipy.stats.spearmanr(plot_median[setup], lengths[setup])[0],2)) 
-    #x_ticks, y_ticks=ticks(plot_median, 'median')
-
-    plt.xlabel('Median Rank')
-    plt.ylabel('Novel length (words)')
-    plt.title('Spearman correlations: {} - {}'.format(sum_spearman, n2v_spearman))
-    #plt.yticks([(((i+999)/1000)*1000) for i in numpy.linspace(0,max(lengths[setup]),10)])
-    #plt.xticks(y_ticks)
-    plt.legend(loc='best', ncol=2, borderaxespad=0.)
-    plt.tight_layout()
-    plt.savefig('{}/doppel_median_lenghts.png'.format(output_folder), dpi=1200, format='png', bbox_inches='tight', pad_inches=0.2)
-
-    plt.clf()
-
-
-    ### Number of characters/score
-
-    for setup in plot_median.keys():
-        if 'sum' in setup:
-            legend_label='Sum'
-            plt.scatter(plot_median[setup], characters_dict[setup], color=sum_color, label=legend_label, marker='P') 
-            sum_spearman='Sum: {}'.format(round(scipy.stats.spearmanr(plot_median[setup], characters_dict[setup])[0],2)) 
-        else:
-            legend_label='N2V'
-            plt.scatter(plot_median[setup], characters_dict[setup], color=sum_color, label=legend_label, marker='v') 
-            n2v_spearman='N2v: {}'.format(round(scipy.stats.spearmanr(plot_median[setup], characters_dict[setup])[0],2)) 
-    x_ticks, y_ticks=ticks(plot_median, 'median')
-
-    plt.xlabel('Median Rank')
-    plt.ylabel('Number of characters')
-    #plt.yticks(characters_dict[setup] )
-    plt.title('Spearman correlations: {} - {}'.format(sum_spearman, n2v_spearman))
-    #plt.xticks(y_ticks)
-    plt.legend(loc='best', ncol=2, borderaxespad=0.)
-    plt.tight_layout()
-    plt.savefig('{}/doppel_median_characters.png'.format(output_folder), dpi=1200, format='png', bbox_inches='tight', pad_inches=0.2)
-
-    plt.clf()
-
-
-    ### Variance of characters frequency/score
-
-    for setup in plot_median.keys():
-        if 'sum' in setup:
-            legend_label='Sum'
-            plt.scatter(plot_median[setup], characters_std[setup], label=legend_label, color=sum_color, marker= 'P') 
-            sum_spearman='Sum: {}'.format(round(scipy.stats.spearmanr(plot_median[setup], characters_std[setup])[0],2)) 
-        else:
-            legend_label='N2V'
-            plt.scatter(plot_median[setup], characters_std[setup], label=legend_label, color=sum_color, marker='v') 
-            n2v_spearman='N2v: {}'.format(round(scipy.stats.spearmanr(plot_median[setup], characters_std[setup])[0],2)) 
-    #x_ticks, y_ticks=ticks(plot_median, 'median')
-
-    plt.xlabel('Median Rank')
-    plt.ylabel('Variance of character mention frequency')
-    plt.title('Spearman correlations: {} - {}'.format(sum_spearman, n2v_spearman))
-    #plt.yticks(characters_std[setup] )
-    #plt.xticks(y_ticks)
-    plt.legend(loc='best', ncol=2, borderaxespad=0.)
-    plt.tight_layout()
-    plt.savefig('{}/doppel_median_frequency_std.png'.format(output_folder), dpi=1200, format='png', pad_inches=0.2, bbox_inches='tight')
-
-    plt.clf()
-
-    ### Score/novel
-
-    for setup in plot_median.keys():
-        if 'sum' in setup:
-            legend_label='Sum'
-            plt.scatter(plot_median[setup], short_names, label=legend_label, color=sum_color, marker='P')
-        else:
-            legend_label='N2V'
-            plt.scatter(plot_median[setup], short_names, label=legend_label, color=sum_color, marker='v')
-    plt.xlabel('Median Rank')
-    plt.ylabel('Novel')
-    #plt.xticks(y_ticks)
-    #plt.yticks(short_names )
-    plt.legend(loc='best', ncol=2, borderaxespad=0.)
-    plt.tight_layout()
-    plt.savefig('{}/doppel_median_names.png'.format(output_folder, setup, novel), dpi=1200, format='png', bbox_inches='tight', pad_inches=0.2)
-    plt.clf()
-
-    ### Lenghts/score MRR
-
-    for setup in plot_mrr.keys():
-        if 'sum' in setup:
-            legend_label='Sum'
-            plt.scatter( plot_mrr[setup],lengths[setup], label=legend_label, color=sum_color, marker='P') 
-            sum_spearman='Sum: {}'.format(round(scipy.stats.spearmanr(plot_mrr[setup], lengths[setup])[0],2)) 
-        else:
-            legend_label='N2V'
-            plt.scatter( plot_mrr[setup],lengths[setup], label=legend_label, color=sum_color, marker='v') 
-            n2v_spearman='N2v: {}'.format(round(scipy.stats.spearmanr(plot_mrr[setup], lengths[setup])[0],2)) 
-    #x_ticks, y_ticks=ticks(plot_mrr, 'mrr')
-    plt.xlabel('MRR')
-    plt.ylabel('Novel length (words)')
-    plt.title('Spearman correlations: {} - {}'.format(sum_spearman, n2v_spearman))
-    plt.gca().invert_xaxis()
-    #plt.yticks(lengths[setup] )
-    #plt.xticks(y_ticks)
-    plt.legend(loc='best', ncol=2, borderaxespad=0.)
-    plt.tight_layout()
-    plt.savefig('{}/doppel_mrr_lengths.png'.format(output_folder), dpi=1200, format='png', bbox_inches='tight', pad_inches=0.2)
-
-    plt.clf()
-
-
-    ### Number of characters/score MRR
-
-    for setup in plot_mrr.keys():
-        if 'sum' in setup:
-            legend_label='Sum'
-            plt.scatter( plot_mrr[setup], characters_dict[setup], label=legend_label, color=sum_color, marker='P') 
-            sum_spearman='Sum: {}'.format(round(scipy.stats.spearmanr(plot_mrr[setup],characters_dict[setup])[0],2)) 
-        else:
-            legend_label='N2V'
-            plt.scatter( plot_mrr[setup], characters_dict[setup], label=legend_label, color=sum_color, marker='v') 
-            n2v_spearman='N2v: {}'.format(round(scipy.stats.spearmanr(plot_mrr[setup],characters_dict[setup])[0],2)) 
-    #x_ticks, y_ticks=ticks(plot_mrr, 'mrr')
-    plt.xlabel('MRR')
-    plt.ylabel('Number of characters')
-    plt.title('Spearman correlations: {} - {}'.format(sum_spearman, n2v_spearman))
-    plt.gca().invert_xaxis()
-    #plt.yticks(characters_dict[setup] )
-    #plt.xticks(y_ticks)
-    plt.legend(loc='best', ncol=2, borderaxespad=0.)
-    plt.tight_layout()
-    plt.savefig('{}/doppel_MRR_characters.png'.format(output_folder), dpi=1200, format='png', bbox_inches='tight', pad_inches=0.2)
-
-    plt.clf()
-
-
-    ### Variance of characters frequency/score MRR
-
-    for setup in plot_mrr.keys():
-        if 'sum' in setup:
-            legend_label='Sum'
-            plt.scatter( plot_mrr[setup], characters_std[setup], label=legend_label, color=sum_color, marker='P') 
-            sum_spearman='Sum: {}'.format(round(scipy.stats.spearmanr(plot_mrr[setup], characters_std[setup])[0],2)) 
-        else:
-            legend_label='N2V'
-            plt.scatter( plot_mrr[setup], characters_std[setup], label=legend_label, color=sum_color, marker='v') 
-            n2v_spearman='N2v: {}'.format(round(scipy.stats.spearmanr(plot_mrr[setup],characters_std[setup])[0],2)) 
-    #x_ticks, y_ticks=ticks(plot_mrr, 'mrr')
-    plt.xlabel('MRR')
-    plt.ylabel('Variance of character mention frequency')
-    plt.title('Spearman correlations: {} - {}'.format(sum_spearman, n2v_spearman))
-    plt.gca().invert_xaxis()
-    #plt.yticks(characters_std[setup] )
-    #plt.xticks(y_ticks)
-    plt.legend(loc='best', ncol=2, borderaxespad=0.)
-    plt.tight_layout()
-    plt.savefig('{}/doppel_MRR_characters_std.png'.format(output_folder), dpi=1200, format='png', bbox_inches='tight', pad_inches=0.2)
-
-    plt.clf()
-
-    ### Score mrr /novel
-
-    for setup in plot_mrr.keys():
-        if 'sum' in setup:
-            legend_label='Sum'
-            plt.scatter(plot_mrr[setup], short_names, label=legend_label, color=sum_color, marker='P')
-        else:
-            legend_label='N2V'
-            plt.scatter(plot_mrr[setup], short_names, label=legend_label, color=sum_color, marker='v')
-    plt.xlabel('MRR')
-    plt.ylabel('Novel')
-    plt.gca().invert_xaxis()
-    #plt.xticks(y_ticks)
-    #plt.yticks(short_names )
-    plt.legend(loc='best', ncol=2, borderaxespad=0.)
-    plt.tight_layout()
-    plt.savefig('{}/doppel_MRR_names.png'.format(output_folder), dpi=1200, format='png', bbox_inches='tight', pad_inches=0.2)
-    plt.clf()
+    #o.write('\nTotal number of evaluations: {}\n\n'.format(len(training_correlations)))

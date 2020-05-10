@@ -1,0 +1,54 @@
+Significance results for ADJ:
+
+P-value:	5.518973831607362e-33
+Effect size	0.36087699279136354
+
+Median for proper names:	0.17036456954730697
+Median for common nouns:	0.20770013160471631
+
+
+Significance results for ADV:
+
+P-value:	4.0801883284571813e-13
+Effect size	0.2187818560141621
+
+Median for proper names:	0.2087723618919095
+Median for common nouns:	0.19217272178135097
+
+
+Significance results for DET:
+
+P-value:	2.517375175623209e-153
+Effect size	0.7956576728126953
+
+Median for proper names:	0.3147573111914219
+Median for common nouns:	0.5392763308970507
+
+
+Significance results for NOUN:
+
+P-value:	8.410845258917662e-39
+Effect size	0.3930065384127691
+
+Median for proper names:	0.4904246730316496
+Median for common nouns:	0.4284722979456787
+
+
+Significance results for PRON:
+
+P-value:	0.000464398239786388
+Effect size	0.10559184569475516
+
+Median for proper names:	0.23159071067900214
+Median for common nouns:	0.21971924616246263
+
+
+Significance results for VERB:
+
+P-value:	8.669288828946255e-60
+Effect size	0.49192598605162485
+
+Median for proper names:	0.6720252879237262
+Median for common nouns:	0.5838734572246524
+
+
