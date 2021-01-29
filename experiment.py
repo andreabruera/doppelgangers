@@ -18,192 +18,33 @@ import tqdm
 
 from tqdm import tqdm
 
-#import nonce2vec.utils.config as cutils
-#import nonce2vec.utils.files as futils
-#from nonce2vec.utils.files import Samples
-#from nonce2vec.utils.novels_utilities import *
-#from nonce2vec.utils.count_based_models_utils import *
-#from nonce2vec.utils.space_quality_test import *
-
 from collections import defaultdict
 from torch import Tensor
 from scipy.sparse import csr_matrix
 
-#from transformers import BertTokenizer, BertModel, BertForMaskedLM
-#from torch.nn import CosineSimilarity, PairwiseDistance
-
-### Parser for the parameters to be passed.
+from utils import cosine_similarity, ppmi
+from count_utils import train_count_sentence, train_pos_sentence
+from bert_utils import test_BERT
 
 parser = argparse.ArgumentParser()
-
-# a shared set of parameters when using gensim
-parser.add_argument('--num-threads', type=int, default=1,
-                           help='number of threads to be used by gensim')
-parser.add_argument('--alpha', type=float,
-                           help='initial learning rate')
-parser.add_argument('--neg', type=int,
-                           help='number of negative samples')
-parser.add_argument('--window', type=int,
-                           help='window size')
-parser.add_argument('--sample', type=float,
-                           help='subsampling rate')
-parser.add_argument('--epochs', type=int,
-                           help='number of epochs')
-parser.add_argument('--min-count', type=int,
-                           help='min frequency count')
-
-### NOVELS EDIT: added the dest for this argument, because it's needed for calling the novels model of N2V or the basic one
 
 parser.add_argument('--on', required=True,
                          choices=['elmo', 'bert', 'count', 'w2v', 'n2v', 'pos'],
                          help='type of test data to be used')
-parser.add_argument('--model', required=False,
-                         dest='background',
-                         help='absolute path to word2vec pretrained model')
 parser.add_argument('--number', required=True, dest='number',
                          help='number of the novel')
-### NOVELS EDIT: added this argument, which is needed for getting the right folder
 parser.add_argument('--folder', required=False,
                          dest='folder',
                          help='absolute path to the novel folder')
-#parser.add_argument('--write_to_file', required=False, default='False',
-                         #action='store_true',
-                         #help='specify whether it is needed to write a file with top similarities')
-parser.add_argument('--train-with', required = False, default = 1,
-                         choices=['exp_alpha'],
-                         help='learning rate computation function')
-parser.add_argument('--lambda', type=float, required = False, default = 70.0,
-                         dest='lambda_den',
-                         help='lambda decay')
-### NOVELS_EDIT: added the destination with the '_' because it didn't seem to be present in the original code - and this messes everything up!
-parser.add_argument('--sample-decay', type=float, required = False,
-                         default = 1.1, dest='sample_decay',
-                         help='sample decay')
-### NOVELS_EDIT: added the destination with the '_' because it didn't seem to be present in the original code - and this messes everything up!
-parser.add_argument('--window-decay', type=int, required = False, default = 3, 
-                         dest='window_decay',
-                         help='window decay')
-### NOVELS_EDIT: added this for training on the wikipedia pages
-parser.add_argument('--quality_test', action='store_true', required = False, default = False)
-### NOVELS_EDIT: added this optional argument for testing the random selection of the sentences
-parser.add_argument('--random_sentences', required=False, action='store_true', help='random_sentences: instead of picking sentences the original order it picks up sentences randomly')
-parser.add_argument('--bert_layers', required = False, type = int, default = 2)
-parser.add_argument('--men_dataset', dest='men_dataset', required=False, type=str)
-parser.add_argument('--common_nouns', action ='store_true', required=False)
-parser.add_argument('--prototype', action ='store_true', required=False)
-parser.add_argument('--wiki', action ='store_true', required=False)
-parser.add_argument('--vocabulary', type=str, required=False)
-parser.add_argument('--window_size', type=int, required=False, default=15)
-parser.add_argument('--top_contexts', type=int, required=False)
-parser.add_argument('--weight', type=int, required=False)
-parser.add_argument('--write_to_file', action ='store_true', required=False, default = True)
-parser.add_argument('--matched', action ='store_true', required=False)
+parser.add_argument('--random_sentences', required=False, 
+                         action='store_true', 
+                         help='Instead of picking sentences the original order it picks up sentences randomly')
+parser.add_argument('--write_to_file', action ='store_true', 
+                         required=False, default = True, 
+                         help='Indicates whether to write to file or not')
 
 args = parser.parse_args()
 
-def train_count_sentence(sentence, entity_name_and_part, vocabulary, word_cooccurrences, args):
-
-    sentence_length = len(sentence)
-
-    for sentence_current_word_index, current_word in enumerate(sentence):
-
-        if current_word == 'CHAR':
-
-            lower_bound = max(0, sentence_current_word_index - args.window_size)
-            upper_bound = min(sentence_length, sentence_current_word_index + args.window_size)
-            window = [n for n in range(lower_bound, upper_bound) if n != sentence_current_word_index]
-            #print([sentence[window] for n in window])
-
-            for position in window:
-
-                other_word = sentence[position] 
-                other_word_index = reduced_vocabulary[other_word]
-
-                if other_word_index != 0:
-
-                    word_cooccurrences[vocabulary_current_word_index][other_word_index] += 1
-
-    return word_cooccurrences, final_vectors
-
-def train_pos_sentence(sentence, entity_name_and_part, pos_cooccurrences, window_size = 5):
-
-    sentence_length = len(sentence)
-
-    window_sizes = [2,5,7,10]
-
-    for window_size in window_sizes:
-
-        for sentence_current_word_index, current_word in enumerate(sentence):
-
-            if current_word[0] == 'CHAR':
-
-                lower_bound = max(0, sentence_current_word_index - window_size)
-                upper_bound = min(sentence_length, sentence_current_word_index + window_size)
-                window = [n for n in range(lower_bound, upper_bound) if n != sentence_current_word_index]
-                #print([sentence[window] for n in window])
-
-                for position in window:
-
-                    other_word = sentence[position] 
-                    other_word_pos = other_word[1]
-
-                    current_entity = entity_name_and_part[:-2]
-                    current_entity_and_window = '{}_{}'.format(current_entity, window_size)
-
-                    pos_cooccurrences[current_entity_and_window][other_word_pos] += 1
-
-    return pos_cooccurrences
-
-def cosine_similarity(peer_v, query_v):
-    if len(peer_v) != len(query_v):
-        raise ValueError('Vectors must be of same length')
-    num = numpy.dot(peer_v, query_v)
-    den_a = numpy.dot(peer_v, peer_v)
-    den_b = numpy.dot(query_v, query_v)
-    return num / (math.sqrt(den_a) * math.sqrt(den_b))
-
-def ppmi(csr_matrix):
-    """Return a ppmi-weighted CSR sparse matrix from an input CSR matrix."""
-    logger.info('Weighing raw count CSR matrix via PPMI')
-    words = sparse.csr_matrix(csr_matrix.sum(axis=1))
-    contexts = sparse.csr_matrix(csr_matrix.sum(axis=0))
-    total_sum = csr_matrix.sum()
-    # csr_matrix = csr_matrix.multiply(words.power(-1)) # #(w, c) / #w
-    # csr_matrix = csr_matrix.multiply(contexts.power(-1))  # #(w, c) / (#w * #c)
-    # csr_matrix = csr_matrix.multiply(total)  # #(w, c) * D / (#w * #c)
-    csr_matrix = csr_matrix.multiply(words.power(-1))\
-                           .multiply(contexts.power(-1))\
-                           .multiply(total_sum)
-    csr_matrix.data = np.log2(csr_matrix.data)  # PMI = log(#(w, c) * D / (#w * #c))
-    csr_matrix = csr_matrix.multiply(csr_matrix > 0)  # PPMI
-    csr_matrix.eliminate_zeros()
-    return csr_matrix
-
-def BERT_test(args, model, tokenizer, tokenized_text):
-
-    masked_index = [i for i, v in enumerate(tokenized_text) if v == '[MASK]'][0]
-    assert tokenized_text[masked_index] == '[MASK]' 
-    other_indexes={token : index for index, token in enumerate(tokenized_text) if token != '[CLS]' and token != '[SEP]' and token != '[MASK]' and '#' not in token}
-
-    indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_text)
-    tokens_tensor = torch.tensor([indexed_tokens])
-
-    with torch.no_grad():
-        encoded_layers, _ = model(tokens_tensor)
-
-    layers = [layer[0] for layer in encoded_layers]
-
-    layered_tensor = layers[11][masked_index]
-    
-    other_words_vectors = {other_word: layers[0][other_word_index] for other_word, other_word_index in other_indexes.items()}
-
-    ''' Section for having a layered tensor for the newly-learnt name
-    #layered_tensor = [layer[masked_index] for layer in layers] 
-    #assert len(layered_tensor) == 12
-    #layered_tensor = torch.stack(layered_tensor)
-    '''
-
-    return layered_tensor, other_words_vectors
 
 def test_on_novel(args):
 
@@ -372,8 +213,6 @@ def test_on_novel(args):
 
                     if 0 not in [count for count_index, count in entity_counter.items()] and overall_training_counter <= proper_names_counter:
 
-
-                        #print('Current entity: {} - for part: {}'.format(entity, part))
 
                         if category == 'common_nouns':
                             sent_list = [re.sub('#{}#|\s{}\s'.format(entity, entity), 'CHAR', line) for line in version if '#{}#'.format(entity) in line] 
