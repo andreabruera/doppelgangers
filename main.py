@@ -10,13 +10,15 @@ import multiprocessing
 import logging
 
 from tqdm import tqdm
-from utils import get_novels_paths, get_word_vectors, get_scores, load_model, \
+from utils import get_novels_paths, \
+                  get_word_vectors, \
+                  get_scores, load_model, \
                   process_novel, sentence_permutation
 
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%d.%m.%Y %I:%M:%S %p', level=logging.INFO)
 os.makedirs('temp', exist_ok=True)
-chosen_metric = 'pearson_r'
-#chosen_metric = 'cosine_similarity'
+#chosen_metric = 'pearson_r'
+chosen_metric = 'cosine_similarity'
 categories = ['common nouns', 'characters']
 
 for model_name in ['bert', 'gpt2', 'w2v', 'elmo']:

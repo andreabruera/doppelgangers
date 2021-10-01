@@ -269,7 +269,7 @@ def sentence_permutation(input_tuple):
 
         return [std_collector, ranking_scores, norm_ranking_scores, rsa_score]
 
-def process_novel(novel_tuple):
+def process_novel(novel_tuple, get_vectors=True):
 
 
     current_stats = collections.defaultdict(float)
@@ -298,12 +298,17 @@ def process_novel(novel_tuple):
     novel_file = [l.strip() for l in open(novel_paths[2])]
     novel['characters'] = [re.sub('#', '', l) for l in novel_file if '$' in l]
     novel['common nouns'] = [re.sub('$', '', l) for l in novel_file if '#' in l]
-    
+
+    ### Storing the novel length in words
+    novel_words = len([w for l in novel_file for w in l.strip().split()])
+
     ### Storing the maximum length per entity
     max_sentences_length = min([len(v) for k, v in novel.items()])
     current_stats['number of sentences considered'] = float(max_sentences_length)
 
     novel_sentences = collections.defaultdict(dict)
+
+    mention_counter = collections.defaultdict(int)
 
     ### Testing
     for category, sentences in novel.items():
@@ -314,15 +319,25 @@ def process_novel(novel_tuple):
         for sentence_number, s in enumerate(sentences):
             ### Finding which entities are present in this sentence
             present_entities = [e for e in s.split() if '$' in e or '#' in e]
-            ### For each entities, obtaining the vectors
+            present_names = [e for e in s.split() if '$' in e]
+
             for e in present_entities:
-                entity_vectors = get_word_vectors(s, e, model, model_name)  
-                if len(entity_vectors) >= 1:
-                    vectors_per_sentence[sentence_number][e] = numpy.average(entity_vectors, axis=0)
+                ### Adding each mention to the counter
+                if e in present_names:
+                    mention_counter[e] += 1
 
-        novel_sentences[category] = vectors_per_sentence
+                ### For each entities, obtaining the vectors
+                if get_vectors:
+                    entity_vectors = get_word_vectors(s, e, model, model_name)  
+                    if len(entity_vectors) >= 1:
+                        vectors_per_sentence[sentence_number][e] = numpy.average(entity_vectors, axis=0)
 
-    return novel_sentences, max_entity_length, max_sentences_length
+        if get_vectors:
+            novel_sentences[category] = vectors_per_sentence
+
+    mentions_std = numpy.std([v for k, v in mention_counter.items()])
+
+    return novel_sentences, novel_words, max_sentences_length, max_entity_length, mentions_std
 
 
 
